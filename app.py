@@ -3,6 +3,7 @@ import cv2
 import numpy as np
 
 # 網頁標題
+st.markdown("### 廣笠機械 Goang Lih")
 st.set_page_config(page_title="數位布鏡分析儀", layout="centered")
 st.title("🔬 數位布鏡 - 自動 WPI 分析")
 st.write("請上傳布樣照片，系統將自動計算 1 英吋內的線圈數量。")
@@ -51,4 +52,5 @@ if uploaded_file is not None:
     st.caption("線圈波紋訊號圖 (前 200 像素)")
 
 st.divider()
+
 st.info("提示：請確保拍照時，1 英吋範圍剛好填滿 900 像素寬度以獲得最佳精度。")
