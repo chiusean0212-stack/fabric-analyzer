@@ -65,8 +65,8 @@ if uploaded_file is not None:
 
     with st.spinner('AI 正在計算線圈密度...'):
         h, w = img_gray.shape
-        x_start = max(0, w // 2 - 450)
-        x_end = min(w, x_start + 900)
+        x_start = max(0, w // 2 - 477)
+        x_end = min(w, x_start + 953)
         roi = img_gray[:, x_start:x_end]
         clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
         enhanced = clahe.apply(roi)
@@ -86,5 +86,6 @@ if uploaded_file is not None:
 
 st.divider()
 st.caption("© 2026 廣笠機械 Goang Lih | 專業針織機械製造 | AI 數位轉型專案")
+
 
 
