@@ -4,7 +4,7 @@ import numpy as np
 import os
 
 # --- 1. 設定驗證碼 (您可以隨時修改這裡的字串) ---
-CORRECT_PASSWORD = "GL777" # 這是您的驗證碼，您可以改成您喜歡的數字或英文
+CORRECT_PASSWORD = "777" # 這是您的驗證碼，您可以改成您喜歡的數字或英文
 
 # 網頁頁籤設定
 st.set_page_config(page_title="廣笠機械 Goang Lih - 數位布鏡", layout="wide")
@@ -86,3 +86,4 @@ if uploaded_file is not None:
 
 st.divider()
 st.caption("© 2026 廣笠機械 Goang Lih | 專業針織機械製造 | AI 數位轉型專案")
+
