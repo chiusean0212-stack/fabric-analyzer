@@ -1,49 +1,87 @@
 import streamlit as st
 import cv2
 import numpy as np
+import os
 
-# 1. 網頁頁籤標題
-st.set_page_config(page_title="廣笠機械 Goang Lih - 數位布鏡", layout="centered")
+# 1. 網頁頁籤設定
+st.set_page_config(page_title="廣笠機械 Goang Lih - 數位布鏡", layout="wide")
 
-# 2. 品牌字體大強化
-# 我們使用 HTML 語法來精確控制字體大小 (size) 與顏色 (color)
+# 2. 依照模擬圖排版：LOGO 與 標題橫向並列
+# 使用自定義 HTML 和 CSS 來達成精確的排版
 st.markdown("""
     <style>
-    .brand-title {
-        font-size: 50px !important;
-        font-weight: 800 !important;
-        color: #1E3A8A; /* 深藍色，顯得專業穩定 */
-        margin-bottom: -10px;
-    }
-    .brand-sub {
-        font-size: 24px !important;
-        color: #666666;
+    .header-container {
+        display: flex;
+        align-items: center;
         margin-bottom: 20px;
     }
+    .logo-img {
+        margin-right: 25px;
+    }
+    .title-text {
+        line-height: 1.1;
+    }
+    .company-name-zh {
+        font-size: 52px !important;
+        font-weight: 800 !important;
+        color: #FF0000; /* 紅色字體 */
+        margin: 0;
+        font-family: "Microsoft JhengHei", sans-serif;
+    }
+    .company-name-en {
+        font-size: 36px !important;
+        font-weight: 600 !important;
+        color: #1E3A8A; /* 深藍色英文，增加層次感 */
+        margin: 0;
+    }
+    .system-subtitle {
+        font-size: 26px !important;
+        color: #555555;
+        font-weight: 400;
+        margin-top: 5px;
+    }
     </style>
-    <p class="brand-title">廣笠機械 Goang Lih</p>
-    <p class="brand-sub">數位布鏡 - 自動 WPI 分析系統</p>
     """, unsafe_allow_html=True)
 
-st.write("---") # 分隔線
-st.write("請上傳布樣照片，系統將利用 AI 頻譜分析技術自動計算 WPI。")
+# 建立 Header 區塊
+header_html = f"""
+<div class="header-container">
+    <div class="logo-img">
+        <img src="https://raw.githubusercontent.com/{st.get_option("server.address") if st.get_option("server.address") else "your-username"}/fabric-analyzer/main/LOGO.png" width="120">
+    </div>
+    <div class="title-text">
+        <p class="company-name-zh">廣笠機械 <span class="company-name-en">Goang Lih</span></p>
+        <p class="system-subtitle">數位布鏡 - 自動 WPI 分析系統</p>
+    </div>
+</div>
+"""
 
-# --- 以下維持分析邏輯 ---
+# 如果 GitHub 上的圖片路徑不好抓，我們改用 Streamlit 標準方式結合 HTML
+col1, col2 = st.columns([1, 5])
+with col1:
+    if os.path.exists("LOGO.png"):
+        st.image("LOGO.png", width=130)
+with col2:
+    st.markdown('<p class="company-name-zh">廣笠機械 <span class="company-name-en">Goang Lih</span></p>', unsafe_allow_html=True)
+    st.markdown('<p class="system-subtitle">數位布鏡 - 自動 WPI 分析系統</p>', unsafe_allow_html=True)
 
-# 上傳檔案按鈕
-uploaded_file = st.file_uploader("選擇布樣照片", type=["jpg", "jpeg", "png"])
+st.write("---")
+
+# --- 核心分析邏輯 ---
+
+st.write("### 📥 上傳布樣")
+uploaded_file = st.file_uploader("選擇照片 (建議解析度：1英吋 = 900像素)", type=["jpg", "jpeg", "png"])
 
 if uploaded_file is not None:
-    # 讀取影像
+    # 讀取與處理
     file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
     img_bgr = cv2.imdecode(file_bytes, 1)
     img_gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
     
-    # 顯示上傳的照片
-    st.image(img_bgr, caption='已上傳照片', use_container_width=True)
+    # 顯示上傳照片
+    st.image(img_bgr, caption='原始布樣照片', use_container_width=True)
 
-    # 執行分析邏輯
-    with st.spinner('正在分析布料結構...'):
+    with st.spinner('AI 正在計算線圈密度...'):
         h, w = img_gray.shape
         x_start = max(0, w // 2 - 450)
         x_end = min(w, x_start + 900)
@@ -62,10 +100,17 @@ if uploaded_file is not None:
         search_range = magnitudes[15:45]
         wpi_result = np.argmax(search_range) + 15
 
-    # 顯示結果 (結果的字也稍微放大)
-    st.success(f"### 偵測結果：WPI = {wpi_result}")
+    # 顯眼的結果顯示
+    st.markdown(f"""
+        <div style="background-color:#F0F2F6; padding:20px; border-radius:10px; border-left: 10px solid #FF0000;">
+            <h2 style="color:#333; margin:0;">偵測結果：WPI = <span style="color:#FF0000; font-size:48px;">{wpi_result}</span></h2>
+        </div>
+    """, unsafe_allow_html=True)
     
-    st.line_chart(projection[:200], use_container_width=True)
+    # 輔助圖表
+    with st.expander("查看波紋分析數據"):
+        st.line_chart(projection[:300])
+        st.caption("線圈波紋訊號圖 (前 300 像素)")
 
 st.divider()
-st.info("© 2026 廣笠機械 Goang Lih - 致力於傳統紡織業 AI 數位轉型")
+st.caption("© 2026 廣笠機械 Goang Lih | 專業針織機械製造 | AI 數位轉型專案")
