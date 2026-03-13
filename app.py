@@ -43,7 +43,7 @@ with st.sidebar:
     selected_lang = st.selectbox("Select Language", ["繁體中文", "English"])
     texts = lang_dict[selected_lang]
 
-# --- 4. 自定義 CSS (放大字體與美化上傳框) ---
+# --- 4. 自定義 CSS ---
 st.markdown(f"""
     <style>
     .stFileUploader label p {{
@@ -73,7 +73,6 @@ if "authenticated" not in st.session_state:
 if not st.session_state["authenticated"]:
     st.markdown("<br><br>", unsafe_allow_html=True)
     _, login_col, _ = st.columns([1, 2, 1])
-    
     with login_col:
         st.markdown(f"""
             <div style="text-align: center; background-color: white; padding: 30px; border-radius: 20px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); border: 1px solid #eee;">
@@ -83,7 +82,6 @@ if not st.session_state["authenticated"]:
                 <p style="color: #666; font-size: 16px;">{texts['login_title']}</p>
             </div>
         """, unsafe_allow_html=True)
-        
         with st.form("login_form"):
             pwd = st.text_input(texts['login_title'], type="password", placeholder=texts['pwd_placeholder'], label_visibility="collapsed")
             submit = st.form_submit_button(texts['login_btn'], use_container_width=True)
@@ -117,17 +115,12 @@ uploaded_file = st.file_uploader(texts['upload_label'], type=['jpg', 'jpeg', 'pn
 if uploaded_file is not None:
     try:
         with st.spinner(texts['analyzing']):
-            # 讀取圖片
             file_bytes = np.frombuffer(uploaded_file.read(), np.uint8)
             img = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
             
-            # --- 精細演算核心 (支援 100 WPI) ---
+            # --- 精細演算核心 (支援至 100 WPI) ---
             img_gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-            
-            # 使用 MedianBlur(3) 取代 GaussianBlur，以保留極細線圈邊緣
             img_clean = cv2.medianBlur(img_gray, 3)
-            
-            # 強力對比增強 (針對黑色、米色、細微布樣)
             clahe = cv2.createCLAHE(clipLimit=4.0, tileGridSize=(4,4))
             enhanced = clahe.apply(img_clean)
             
@@ -136,21 +129,40 @@ if uploaded_file is not None:
             x_end = min(w, x_start + 900)
             roi = enhanced[:, x_start:x_end]
 
-            # 梯度特徵提取 (強化三角形線圈結構)
             grad_x = cv2.Sobel(roi, cv2.CV_64F, 1, 0, ksize=3)
             grad_y = cv2.Sobel(roi, cv2.CV_64F, 0, 1, ksize=3)
             grad_mag = cv2.magnitude(grad_x, grad_y)
             
-            # 投影與自相關分析
             projection = np.mean(grad_mag, axis=0).astype(np.float32)
             projection -= np.mean(projection)
             
             n = len(projection)
             corr = np.correlate(projection, projection, mode='full')[n-1:]
             
-            # --- 修改搜尋範圍：Lag 8 (112 WPI) 到 Lag 90 (10 WPI) ---
             search_start, search_end = 8, 90 
             lags = corr[search_start:search_end]
             
             best_lag = np.argmax(lags) + search_start
-            wpi_result = round(900 / best_
+            wpi_result = round(900 / best_lag)
+            
+            # --- 顯示結果 ---
+            st.image(uploaded_file, caption=selected_lang, use_container_width=True)
+            st.markdown(f"""
+                <div style="text-align: center; background-color: #f0f2f6; padding: 25px; border-radius: 15px; border: 2px solid #1E3A8A; margin-top: 20px;">
+                    <h2 style="color: #1E3A8A; margin-top: 0;">{texts['result_title']}</h2>
+                    <span style="font-size: 85px; font-weight: bold; color: #FF0000;">WPI = {wpi_result}</span>
+                </div>
+            """, unsafe_allow_html=True)
+    except Exception as e:
+        st.error(f"{texts['err_msg']}: {e}")
+
+# --- 8. 頁尾資訊 ---
+st.markdown("<br><br>", unsafe_allow_html=True)
+st.divider()
+st.markdown(f"""
+    <div style="text-align: center; color: #666;">
+        <p style="font-size: 18px; font-weight: bold; color: #1E3A8A;">{texts['footer_motto']}</p>
+        <p style="font-size: 14px;">{texts['footer_sub']}</p>
+        <p style="font-size: 12px; margin-top: 10px;">© 2026 Goang Lih Machinery Co., Ltd. All rights reserved.</p>
+    </div>
+""", unsafe_allow_html=True)
