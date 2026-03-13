@@ -5,7 +5,7 @@ import os
 
 st.set_page_config(page_title="Goang Lih AI", layout="centered")
 
-# --- 介面語言 ---
+# --- 介面設定 ---
 t = {"繁體中文": ["廣笠機械", "AI 分析系統", "📸 上傳照片", "結果", "授權登入"],
      "English": ["Goang Lih", "AI Analysis", "📸 Upload", "Result", "Login"]}[st.sidebar.selectbox("Lang", ["繁體中文", "English"])]
 
@@ -24,9 +24,9 @@ if up:
         img = cv2.imdecode(np.frombuffer(up.read(), np.uint8), 1)
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         
-        # 1. 影像處理：使用中等強度的 GaussianBlur 壓制可能導致 112/75 的細微雜訊
-        blur = cv2.GaussianBlur(gray, (5, 5), 0)
-        enhanced = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8)).apply(blur)
+        # 1. 精細預處理：使用中值濾波取代高斯模糊，保護 82 WPI 的邊緣
+        denoise = cv2.medianBlur(gray, 3)
+        enhanced = cv2.createCLAHE(clipLimit=4.0, tileGridSize=(8,8)).apply(denoise)
         
         h, w = enhanced.shape
         roi = enhanced[:, w//2-400 : w//2+400]
@@ -37,28 +37,31 @@ if up:
         n = len(proj)
         corr = np.correlate(proj, proj, mode='full')[n-1:]
         
-        # 2. 搜尋範圍鎖定 (15WPI ~ 100WPI)
-        s_start, s_end = 9, 60
-        lags = corr[s_start:s_end]
+        # 2. 定義兩個關鍵視窗：高頻區 (50-100 WPI) 與 結構區 (20-50 WPI)
+        # Lag 9-18 (高頻) vs Lag 19-45 (結構)
+        high_freq = corr[9:19]   # 對應 ~95 to 48 WPI
+        low_freq = corr[19:46]   # 對應 ~47 to 20 WPI
         
-        # 3. 關鍵修正：採用「結構優先加權」
-        # 我們對較大的 Lag (較低的 WPI，如桃紅 28 / 灰色 53) 給予權重優勢
-        # 這能防止桃紅 28 被誤判為 56 或 112
-        # 權重由 Lag 60 (1.4倍) 遞減至 Lag 9 (1.0倍)
-        weights = np.linspace(1.0, 1.4, len(lags)) 
-        best_lag = np.argmax(lags * weights) + s_start
+        p_high = np.argmax(high_freq) + 9
+        p_low = np.argmax(low_freq) + 19
         
-        # 4. 二階驗證 (針對白色 82 WPI)
-        # 如果最強訊號在 28-53 區間，但極高頻 (Lag 9-11) 有一個超強的獨立峰值
-        # 才判定為高密布料，否則維持結構優先
-        if best_lag > 15: # 目前判定為中低 WPI
-            high_freq_zone = corr[9:13]
-            if np.max(high_freq_zone) > corr[best_lag] * 1.2: # 只有高頻訊號極強時才切換
-                best_lag = np.argmax(high_freq_zone) + 9
+        # 3. 智慧決策邏輯 (核心修正)
+        # 如果高頻區的最強峰值 能量超過 結構區最強峰值的 85%
+        # 代表這是一塊細密布料 (如白 82 或 灰 53)，必須取高頻值
+        if corr[p_high] > corr[p_low] * 0.85:
+            best_lag = p_high
+            # 針對透白 75 的特別處理：
+            # 如果抓到 Lag 12 (75 WPI)，檢查它的兩倍距離是否存在強峰值
+            if best_lag < 14:
+                check_lag = best_lag * 2
+                if corr[check_lag] > corr[best_lag] * 0.75:
+                    best_lag = check_lag
+        else:
+            # 否則，這是一塊大循環布料 (如桃紅 28)
+            best_lag = p_low
 
         wpi = round(900 / best_lag)
         
-        # 顯示結果
         st.image(up, use_container_width=True)
         st.markdown(f"""
             <div style='text-align:center; background:#f0f2f6; padding:20px; border-radius:15px; border:2px solid #1E3A8A;'>
