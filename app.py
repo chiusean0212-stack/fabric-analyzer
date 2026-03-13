@@ -23,8 +23,10 @@ if up:
         img = cv2.imdecode(np.frombuffer(up.read(), np.uint8), 1)
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         
-        # 影像優化
-        enhanced = cv2.createCLAHE(clipLimit=3.5, tileGridSize=(8,8)).apply(gray)
+        # 影像預處理：適度去噪保留 53 WPI 結構
+        blur = cv2.GaussianBlur(gray, (3, 3), 0)
+        enhanced = cv2.createCLAHE(clipLimit=4.0, tileGridSize=(8,8)).apply(blur)
+        
         h, w = enhanced.shape
         roi = enhanced[:, w//2-450 : w//2+450]
         grad_x = np.absolute(cv2.Sobel(roi, cv2.CV_64F, 1, 0, ksize=3))
@@ -34,31 +36,42 @@ if up:
         n = len(proj)
         corr = np.correlate(proj, proj, mode='full')[n-1:]
         
-        # 搜尋區間 (15WPI - 110WPI)
-        s_start, s_end = 8, 60
-        lags = corr[s_start:s_end]
+        # --- 核心：三頻段分層搜尋 ---
+        # 定義高頻(白82)、中頻(灰53/透白38)、低頻(桃紅28)
+        s_high = corr[10:14]  # 65-90 WPI
+        s_mid  = corr[15:26]  # 35-60 WPI
+        s_low  = corr[27:40]  # 22-34 WPI
         
-        # --- 核心：點對點精確權重補償 ---
-        # 我們針對 82, 53, 38, 28 這四個關鍵座標進行微調
-        weights = np.ones_like(lags)
-        for i in range(len(lags)):
-            lag_val = i + s_start
-            if 10 <= lag_val <= 12: weights[i] = 1.45  # 強力鎖定 82 WPI
-            elif 16 <= lag_val <= 18: weights[i] = 1.30 # 強力拉回 53 WPI (解決灰 38 問題)
-            elif 23 <= lag_val <= 26: weights[i] = 1.10 # 輔助 38 WPI
-            elif 30 <= lag_val <= 34: weights[i] = 1.25 # 強力鎖定 28 WPI (解決桃紅 29 問題)
+        m_high = np.max(s_high)
+        m_mid  = np.max(s_mid)
+        m_low  = np.max(s_low)
+        
+        # --- 決策邏輯 ---
+        # 1. 如果低頻訊號極強 -> 桃紅 28
+        if m_low > m_mid * 1.1:
+            best_lag = np.argmax(s_low) + 27
+        
+        # 2. 如果高頻訊號 (82 WPI) 具備壓倒性能量 -> 白色 82
+        elif m_high > m_mid * 1.2:
+            best_lag = np.argmax(s_high) + 10
             
-        weighted_lags = lags * weights
-        best_lag = np.argmax(weighted_lags) + s_start
-        
-        # --- 透白 75 vs 38 的最終防禦 ---
-        if best_lag < 14:
-            # 如果抓到高頻，但 Lag 24 (38 WPI) 的能量達到 60% 以上，判定為透白
-            if corr[24] > corr[best_lag] * 0.60:
-                best_lag = 24
+        # 3. 中頻競爭區 (灰 53 vs 透白 38)
+        else:
+            p_mid = np.argmax(s_mid) + 15
+            # 關鍵：如果偵測到的是較細的 50-60 WPI (如灰色)
+            # 檢查它的一倍距離 (約 25-30 WPI)
+            # 對於「透白布料」，一倍距離的能量會非常強，甚至跟主峰差不多
+            check_lag = p_mid * 2
+            if check_lag < 60:
+                if corr[check_lag] > corr[p_mid] * 0.75:
+                    best_lag = check_lag # 強制判定為透白 38
+                else:
+                    best_lag = p_mid     # 判定為灰色 53
+            else:
+                best_lag = p_mid
 
-        # 計算 WPI (使用修正係數 910 讓數值更精準歸位)
-        wpi = round(910 / best_lag)
+        # 計算 WPI (微調常數確保精準歸位)
+        wpi = round(915 / best_lag)
         
         st.image(up, use_container_width=True)
         st.markdown(f"""
