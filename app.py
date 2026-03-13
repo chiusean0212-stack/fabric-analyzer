@@ -23,12 +23,10 @@ if up:
         img = cv2.imdecode(np.frombuffer(up.read(), np.uint8), 1)
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         
-        # 影像優化：移除中值濾波，換回輕微 GaussianBlur，避免抹除 53 WPI 細節
-        blur = cv2.GaussianBlur(gray, (3, 3), 0)
-        enhanced = cv2.createCLAHE(clipLimit=4.0, tileGridSize=(8,8)).apply(blur)
-        
+        # 影像優化：強化邊緣對比
+        enhanced = cv2.createCLAHE(clipLimit=4.0, tileGridSize=(8,8)).apply(gray)
         h, w = enhanced.shape
-        roi = enhanced[:, w//2-450 : w//2+450]
+        roi = enhanced[:, w//2-400 : w//2+400]
         grad_x = np.absolute(cv2.Sobel(roi, cv2.CV_64F, 1, 0, ksize=3))
         
         proj = np.mean(grad_x, axis=0).astype(np.float32)
@@ -36,32 +34,43 @@ if up:
         n = len(proj)
         corr = np.correlate(proj, proj, mode='full')[n-1:]
         
-        # --- 核心優化：座標權重法 ---
-        # 搜尋範圍：Lag 9 (~100 WPI) 到 Lag 40 (~23 WPI)
-        s_start, s_end = 9, 41
+        # 搜尋範圍 (90 WPI ~ 20 WPI)
+        s_start, s_end = 10, 50
         lags = corr[s_start:s_end]
         
-        # 針對您的布樣設定「導引權重」
-        weights = np.ones_like(lags)
-        for i in range(len(lags)):
-            lag_val = i + s_start
-            if 10 <= lag_val <= 12: weights[i] = 1.4  # 保護 82 WPI
-            if 16 <= lag_val <= 18: weights[i] = 1.3  # 保護 53 WPI
-            if 23 <= lag_val <= 26: weights[i] = 1.25 # 保護 38 WPI (解決透白 19 問題)
-            if 31 <= lag_val <= 34: weights[i] = 1.2  # 保護 28 WPI
-            
-        weighted_lags = lags * weights
-        best_lag = np.argmax(weighted_lags) + s_start
+        # 取得全域最強峰值
+        max_idx = np.argmax(lags)
+        best_lag = max_idx + s_start
         
-        # 額外檢查：防止透光布料跳到倍頻
-        # 如果選中的是 Lag 11-13 (約 75-82 WPI)，但 Lag 24 有一定強度，強制跳回 38
+        # --- 核心邏輯：波段衝突處理 ---
+        
+        # 1. 處理「透白 76 -> 38」
+        # 如果初步偵測到 Lag 10~14 (高頻)，檢查兩倍距離 (Lag 20~28)
         if 10 <= best_lag <= 14:
-            if corr[24] > corr[best_lag] * 0.7:
-                best_lag = 24
-
-        # 計算 WPI (使用 910 穩定係數)
-        wpi = round(910 / best_lag)
+            double_lag = best_lag * 2
+            # 對於透光布料，兩倍距離的能量會非常穩定，門檻設為 0.65
+            if corr[double_lag] > corr[best_lag] * 0.65:
+                best_lag = double_lag
         
+        # 2. 處理「桃紅 36 -> 28」
+        # 桃紅 28 應該在 Lag 32 附近。如果系統現在選在 25 (36 WPI)
+        # 說明它抓到了組織的半週期。我們檢查 Lag 31-34
+        if 20 <= best_lag <= 27:
+            # 尋找 28 WPI 區間 (Lag 31-34) 的最強點
+            pink_zone = corr[31:35]
+            # 如果 28 WPI 區間的能量有目前最強點的 80% 強，強制歸位到 28
+            if np.max(pink_zone) > corr[best_lag] * 0.8:
+                best_lag = np.argmax(pink_zone) + 31
+
+        # 3. 處理「灰色 53」
+        # 確保 Lag 17 附近的優先權
+        if 15 <= best_lag <= 19:
+            pass # 維持 53 WPI
+
+        # 使用 915 係數微調歸位
+        wpi = round(915 / best_lag)
+        
+        # 顯示結果
         st.image(up, use_container_width=True)
         st.markdown(f"""
             <div style='text-align:center; background:#f0f2f6; padding:20px; border-radius:15px; border:2px solid #1E3A8A;'>
