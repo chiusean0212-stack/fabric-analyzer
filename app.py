@@ -5,7 +5,6 @@ import os
 
 st.set_page_config(page_title="Goang Lih AI", layout="centered")
 
-# --- 介面設定 ---
 t = {"繁體中文": ["廣笠機械", "AI 分析系統", "📸 上傳照片", "結果", "授權登入"],
      "English": ["Goang Lih", "AI Analysis", "📸 Upload", "Result", "Login"]}[st.sidebar.selectbox("Lang", ["繁體中文", "English"])]
 
@@ -24,12 +23,11 @@ if up:
         img = cv2.imdecode(np.frombuffer(up.read(), np.uint8), 1)
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         
-        # 1. 精細預處理：使用中值濾波取代高斯模糊，保護 82 WPI 的邊緣
-        denoise = cv2.medianBlur(gray, 3)
-        enhanced = cv2.createCLAHE(clipLimit=4.0, tileGridSize=(8,8)).apply(denoise)
+        # 1. 預處理：使用 CLAHE 強化細微的 82 WPI 紗線，但不使用模糊
+        enhanced = cv2.createCLAHE(clipLimit=5.0, tileGridSize=(4,4)).apply(gray)
         
         h, w = enhanced.shape
-        roi = enhanced[:, w//2-400 : w//2+400]
+        roi = enhanced[:, w//2-450 : w//2+450]
         grad_x = np.absolute(cv2.Sobel(roi, cv2.CV_64F, 1, 0, ksize=3))
         
         proj = np.mean(grad_x, axis=0).astype(np.float32)
@@ -37,28 +35,34 @@ if up:
         n = len(proj)
         corr = np.correlate(proj, proj, mode='full')[n-1:]
         
-        # 2. 定義兩個關鍵視窗：高頻區 (50-100 WPI) 與 結構區 (20-50 WPI)
-        # Lag 9-18 (高頻) vs Lag 19-45 (結構)
-        high_freq = corr[9:19]   # 對應 ~95 to 48 WPI
-        low_freq = corr[19:46]   # 對應 ~47 to 20 WPI
+        # 2. 定義三個搜尋點位 (對應您所有的布樣)
+        # 高頻點 (82WPI -> Lag 11)
+        # 中頻點 (53WPI -> Lag 17, 38WPI -> Lag 24)
+        # 低頻點 (28WPI -> Lag 32)
+        s_start, s_end = 9, 45
+        lags = corr[s_start:s_end]
         
-        p_high = np.argmax(high_freq) + 9
-        p_low = np.argmax(low_freq) + 19
+        # 3. 採用「高頻優先加強」
+        # 我們給予高 WPI (小 Lag) 額外的能量加成，強迫白回歸 82
+        weights = np.zeros_like(lags)
+        for i in range(len(lags)):
+            lag_val = i + s_start
+            if lag_val < 15: weights[i] = 1.6 # 強力拉起 82 WPI
+            elif lag_val < 20: weights[i] = 1.3 # 輔助 53 WPI
+            else: weights[i] = 1.0 # 正常處理 38, 28 WPI
+            
+        weighted_lags = lags * weights
+        best_idx = np.argmax(weighted_lags)
+        best_lag = best_idx + s_start
         
-        # 3. 智慧決策邏輯 (核心修正)
-        # 如果高頻區的最強峰值 能量超過 結構區最強峰值的 85%
-        # 代表這是一塊細密布料 (如白 82 或 灰 53)，必須取高頻值
-        if corr[p_high] > corr[p_low] * 0.85:
-            best_lag = p_high
-            # 針對透白 75 的特別處理：
-            # 如果抓到 Lag 12 (75 WPI)，檢查它的兩倍距離是否存在強峰值
-            if best_lag < 14:
-                check_lag = best_lag * 2
-                if corr[check_lag] > corr[best_lag] * 0.75:
+        # 4. 針對「透白 75」的最後防線
+        # 如果初步選中 75 WPI (Lag 12)，我們看 38 WPI (Lag 24) 的訊號
+        # 只有當 38 WPI 處的訊號能量「明顯比 75 WPI 原始能量更強」時，才降頻
+        if best_lag < 15:
+            check_lag = best_lag * 2
+            if check_lag < s_end:
+                if corr[check_lag] > corr[best_lag] * 0.9: # 提高門檻，保護 82
                     best_lag = check_lag
-        else:
-            # 否則，這是一塊大循環布料 (如桃紅 28)
-            best_lag = p_low
 
         wpi = round(900 / best_lag)
         
