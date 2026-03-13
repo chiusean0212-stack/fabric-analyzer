@@ -23,10 +23,8 @@ if up:
         img = cv2.imdecode(np.frombuffer(up.read(), np.uint8), 1)
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         
-        # 影像預處理：適度去噪保留 53 WPI 結構
-        blur = cv2.GaussianBlur(gray, (3, 3), 0)
-        enhanced = cv2.createCLAHE(clipLimit=4.0, tileGridSize=(8,8)).apply(blur)
-        
+        # 影像預處理：強化對比，不使用模糊，保留所有細節
+        enhanced = cv2.createCLAHE(clipLimit=5.0, tileGridSize=(8,8)).apply(gray)
         h, w = enhanced.shape
         roi = enhanced[:, w//2-450 : w//2+450]
         grad_x = np.absolute(cv2.Sobel(roi, cv2.CV_64F, 1, 0, ksize=3))
@@ -36,43 +34,33 @@ if up:
         n = len(proj)
         corr = np.correlate(proj, proj, mode='full')[n-1:]
         
-        # --- 核心：三頻段分層搜尋 ---
-        # 定義高頻(白82)、中頻(灰53/透白38)、低頻(桃紅28)
-        s_high = corr[10:14]  # 65-90 WPI
-        s_mid  = corr[15:26]  # 35-60 WPI
-        s_low  = corr[27:40]  # 22-34 WPI
+        # 搜尋範圍：Lag 8 (112 WPI) 到 Lag 60 (15 WPI)
+        s_start, s_end = 8, 60
+        lags = corr[s_start:s_end]
         
-        m_high = np.max(s_high)
-        m_mid  = np.max(s_mid)
-        m_low  = np.max(s_low)
+        # --- 核心優化：權重線性補償 (解決減半問題) ---
+        # 越小的 Lag (高 WPI) 越難被偵測，所以我們給予線性補強
+        # 從 1.6 倍 (Lag 8) 線性降到 1.0 倍 (Lag 60)
+        w_factor = np.linspace(1.6, 1.0, len(lags))
+        weighted_lags = lags * w_factor
         
-        # --- 決策邏輯 ---
-        # 1. 如果低頻訊號極強 -> 桃紅 28
-        if m_low > m_mid * 1.1:
-            best_lag = np.argmax(s_low) + 27
+        # 取得加權後的最強峰值
+        best_idx = np.argmax(weighted_lags)
+        best_lag = best_idx + s_start
         
-        # 2. 如果高頻訊號 (82 WPI) 具備壓倒性能量 -> 白色 82
-        elif m_high > m_mid * 1.2:
-            best_lag = np.argmax(s_high) + 10
-            
-        # 3. 中頻競爭區 (灰 53 vs 透白 38)
-        else:
-            p_mid = np.argmax(s_mid) + 15
-            # 關鍵：如果偵測到的是較細的 50-60 WPI (如灰色)
-            # 檢查它的一倍距離 (約 25-30 WPI)
-            # 對於「透白布料」，一倍距離的能量會非常強，甚至跟主峰差不多
-            check_lag = p_mid * 2
-            if check_lag < 60:
-                if corr[check_lag] > corr[p_mid] * 0.75:
-                    best_lag = check_lag # 強制判定為透白 38
-                else:
-                    best_lag = p_mid     # 判定為灰色 53
-            else:
-                best_lag = p_mid
-
-        # 計算 WPI (微調常數確保精準歸位)
-        wpi = round(915 / best_lag)
+        # --- 智慧防跳號 (針對灰 53/26 與 透白 75/38) ---
+        # 如果選中的是 20-30 WPI 區間，檢查它是否有更強的「倍頻」
+        if 25 <= best_lag <= 40:
+            half_lag = int(best_lag / 2)
+            if half_lag >= s_start:
+                # 如果一半位置的訊號有 80% 強，代表它是真正的紗線 (如灰 53)
+                if corr[half_lag] > corr[best_lag] * 0.8:
+                    best_lag = half_lag
         
+        # 計算 WPI (使用 910 係數)
+        wpi = round(910 / best_lag)
+        
+        # 顯示結果
         st.image(up, use_container_width=True)
         st.markdown(f"""
             <div style='text-align:center; background:#f0f2f6; padding:20px; border-radius:15px; border:2px solid #1E3A8A;'>
