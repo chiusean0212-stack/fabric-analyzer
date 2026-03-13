@@ -17,7 +17,7 @@ with st.sidebar:
 if "auth" not in st.session_state: st.session_state["auth"] = False
 if not st.session_state["auth"]:
     c1, c2, c3 = st.columns([1, 2, 1])
-    with c2:
+    with col2:
         st.title(t["t"])
         pwd = st.text_input(t["l"], type="password")
         if st.button(t["l"]):
@@ -38,9 +38,10 @@ if up:
         img = cv2.imdecode(raw, 1)
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         
-        # 針對白色透光調整：降低濾波強度避免抹平訊號，提高對比強化細線
-        clean = cv2.bilateralFilter(gray, 5, 40, 40)
-        enhanced = cv2.createCLAHE(clipLimit=4.0, tileGridSize=(8,8)).apply(clean)
+        # 混合濾波：先用中值濾波去噪，再用雙邊濾波保留邊緣
+        denoise = cv2.medianBlur(gray, 3)
+        clean = cv2.bilateralFilter(denoise, 5, 50, 50)
+        enhanced = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8,8)).apply(clean)
         
         h, w = enhanced.shape
         roi = enhanced[:, max(0, w//2-450) : min(w, w//2+450)]
@@ -53,16 +54,23 @@ if up:
         n = len(proj)
         corr = np.correlate(proj, proj, mode='full')[n-1:]
         
-        # --- 重新校準搜尋範圍 (10 - 80 WPI) ---
-        # 11 對應 81 WPI, 65 對應 14 WPI
-        s_start, s_end = 11, 65
+        # 搜尋區間 (對應約 13 - 90 WPI)
+        s_start, s_end = 10, 70
         lags = corr[s_start:s_end]
         
-        # 訊號增強：對較細的間距（高WPI區段）給予輕微權重補償
-        weights = np.linspace(1.1, 1.0, len(lags))
-        weighted_lags = lags * weights
+        # 基礎最強峰值
+        p1_idx = np.argmax(lags)
+        best_lag = p1_idx + s_start
         
-        best_lag = np.argmax(weighted_lags) + s_start
+        # --- 核心：防跳號驗證邏輯 ---
+        # 如果抓到的 Lag 太小 (WPI 太大，例如 75)，檢查它的 2 倍 Lag (也就是 1/2 WPI，例如 37)
+        check_lag = best_lag * 2
+        if check_lag < s_end:
+            # 如果兩倍距離的地方也有一個夠強的峰值 (強度達到最強者的 60% 以上)
+            # 說明兩倍距離的才是真正的紗線間距
+            if corr[check_lag] > lags[p1_idx] * 0.6:
+                best_lag = check_lag
+
         wpi = round(900 / best_lag)
         
         st.image(up, use_container_width=True)
