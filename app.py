@@ -80,4 +80,11 @@ if up:
         st.markdown(f"""
             <div style='text-align:center; background:#f0f2f6; padding:20px; border-radius:15px; border:2px solid #1E3A8A;'>
                 <h2 style='color:#1E3A8A;'>{t[3]}</h2>
-                <p style='font-size
+                <p style='font-size:80px; font-weight:bold; color:#FF0000; margin:0;'>WPI = {wpi}</p>
+            </div>
+        """, unsafe_allow_html=True)
+        
+    except Exception as e:
+        st.error(f"Error: {e}")
+
+st.caption("© 2026 Goang Lih Machinery Co., Ltd.")
