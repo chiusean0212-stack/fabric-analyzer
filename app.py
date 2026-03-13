@@ -118,13 +118,13 @@ if uploaded_file is not None:
             file_bytes = np.frombuffer(uploaded_file.read(), np.uint8)
             img = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
             
-            # --- 精細與透明優化演算核心 ---
+            # --- 核心優化演算法 ---
             img_gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
             
-            # 使用雙邊濾波：針對白色布料保留邊緣並去除透明空隙背景雜訊
+            # 雙邊濾波保留邊緣並減少透明背景雜訊
             img_clean = cv2.bilateralFilter(img_gray, 9, 75, 75)
             
-            # 強化對比度
+            # 強力對比
             clahe = cv2.createCLAHE(clipLimit=5.0, tileGridSize=(8,8))
             enhanced = clahe.apply(img_clean)
             
@@ -133,23 +133,35 @@ if uploaded_file is not None:
             x_end = min(w, x_start + 900)
             roi = enhanced[:, x_start:x_end]
 
-            # 強化垂直梯度偵測：解決白色透明布料的橫向干擾
+            # 專注垂直邊緣，減少橫向干擾
             grad_x = cv2.Sobel(roi, cv2.CV_64F, 1, 0, ksize=5)
             grad_x = np.absolute(grad_x)
             
-            # 垂直投影
             projection = np.mean(grad_x, axis=0).astype(np.float32)
             projection -= np.mean(projection)
             
-            # 自相關分析
             n = len(projection)
             corr = np.correlate(projection, projection, mode='full')[n-1:]
             
-            # 搜尋範圍：Lag 8 (112 WPI) 到 Lag 90 (10 WPI)
+            # 搜尋區間 (10 - 112 WPI)
             search_start, search_end = 8, 90 
             lags = corr[search_start:search_end]
             
-            # --- 二階峰值修正邏輯 (Anti-Harmonic Logic) ---
-            # 防止 37 WPI 被誤判為 19 WPI (倍頻錯誤)
+            # 取得主要峰值
             p1_idx = np.argmax(lags)
-            best_lag = p1_idx + search_
+            best_lag = p1_idx + search_start
+            
+            # 倍頻檢查邏輯 (解決 19 變 37 問題)
+            half_lag = int(best_lag / 2)
+            if half_lag >= search_start:
+                half_idx = half_lag - search_start
+                # 若半頻位置訊號強度夠，則選取更細的間距
+                if lags[half_idx] > lags[p1_idx] * 0.7:
+                    best_lag = half_lag
+
+            wpi_result = round(900 / best_lag)
+            
+            # --- 顯示結果 ---
+            st.image(uploaded_file, caption=selected_lang, use_container_width=True)
+            st.markdown(f"""
+                <div style="text-align: center;
