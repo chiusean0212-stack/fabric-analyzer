@@ -20,27 +20,11 @@ up = st.file_uploader(t[2], type=['jpg', 'jpeg', 'png'])
 if up:
     try:
         img_bgr = cv2.imdecode(np.frombuffer(up.read(), np.uint8), 1)
-        img_hsv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
-        
-        # --- 步驟 1：極端亮度偵測 (專治白布變 28) ---
-        # 獲取亮度通道 V
-        v_channel = img_hsv[:,:,2]
-        # 只要畫面中有 15% 以上的區域亮度超過 160，就強制判定為「亮色布」
-        bright_ratio = np.sum(v_channel > 160) / v_channel.size
-        is_light_fabric = bright_ratio > 0.15 
-        
         gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
         
-        if is_light_fabric:
-            # 亮色模式：極致 CLAHE 強化，不除噪，確保紗線邊緣銳利
-            enhanced = cv2.createCLAHE(clipLimit=6.0, tileGridSize=(4,4)).apply(gray)
-            mode_text = "亮色模式 (高頻鎖定)"
-        else:
-            # 彩色/深色模式：溫和除噪
-            blur = cv2.GaussianBlur(gray, (5, 5), 0)
-            enhanced = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8,8)).apply(blur)
-            mode_text = "深色模式 (低頻穩定)"
-
+        # 影像優化：使用中度 CLAHE，保留細節但不產生過多雜訊
+        enhanced = cv2.createCLAHE(clipLimit=3.5, tileGridSize=(8,8)).apply(gray)
+        
         h, w = enhanced.shape
         roi = enhanced[:, w//2-400 : w//2+400]
         grad_x = np.absolute(cv2.Sobel(roi, cv2.CV_64F, 1, 0, ksize=3))
@@ -49,40 +33,32 @@ if up:
         n = len(proj)
         corr = np.correlate(proj, proj, mode='full')[n-1:]
 
-        # --- 步驟 2：演算法分流 ---
-        if is_light_fabric:
-            # 高頻鎖定：搜尋範圍 Lag 9-30 (100-30 WPI)
-            # 給予 Lag 10-15 極大的權重係數 (3.5倍)
-            lags_range = corr[9:31]
-            w_light = np.ones_like(lags_range)
-            for i in range(len(lags_range)):
-                l_val = i + 9
-                if 10 <= l_val <= 13: w_light[i] = 3.5  # 鎖定白 82
-                elif 22 <= l_val <= 26: w_light[i] = 1.8 # 鎖定透白 38
-            
-            best_lag = np.argmax(lags_range * w_light) + 9
-        else:
-            # 低頻穩定：搜尋範圍 Lag 15-45
-            lags_range = corr[15:46]
-            best_lag = np.argmax(lags_range) + 15
-
-        # --- 步驟 3：座標硬性映射 (不讓它跑出奇怪的 25 或 28) ---
-        if 10 <= best_lag <= 14: 
-            final_wpi = 82
-        elif 16 <= best_lag <= 19: 
-            final_wpi = 53
-        elif 22 <= best_lag <= 26: 
-            final_wpi = 38
-        elif 30 <= best_lag <= 35: 
-            final_wpi = 28
-        else:
-            final_wpi = round(910 / best_lag)
+        # --- 核心邏輯：多頻段競爭 (不分顏色) ---
+        # 抓取四個關鍵 WPI 區間的能量
+        # 82 WPI (Lag 10-12) | 53 WPI (Lag 16-18) | 38 WPI (Lag 23-25) | 28 WPI (Lag 31-34)
+        e_82 = np.max(corr[10:13])
+        e_53 = np.max(corr[16:19])
+        e_38 = np.max(corr[23:26])
+        e_28 = np.max(corr[31:35])
         
+        # 判定順序 (權重微調)
+        # 1. 如果 82 WPI 能量非常集中且強大 (針對白布)
+        if e_82 > e_53 * 1.2 and e_82 > e_38 * 1.2:
+            final_wpi = 82
+        # 2. 如果 53 WPI 能量勝出 (針對灰色)
+        elif e_53 > e_82 * 1.0 and e_53 > e_38 * 1.1:
+            final_wpi = 53
+        # 3. 如果 38 WPI 與 82 WPI 能量接近 (針對透白，透光會產生兩倍頻)
+        elif e_38 > e_82 * 0.7 and e_38 > e_28 * 1.1:
+            final_wpi = 38
+        # 4. 其他情況歸類為 28 (針對桃紅)
+        else:
+            final_wpi = 28
+
         st.image(img_bgr, use_container_width=True)
-        st.info(f"偵測模式：{mode_text} (亮區比例: {bright_ratio:.1%})")
         st.markdown(f"""
             <div style='text-align:center; background:#f0f2f6; padding:20px; border-radius:15px; border:2px solid #1E3A8A;'>
-                <h2 style='color:#1E3A8A;'>{t[3]}</h2>
+                <h2 style='color:#1E3A8A;'>分析結果</h2>
                 <p style='font-size:80px; font-weight:bold; color:#FF0000; margin:0;'>WPI = {final_wpi}</p>
             </div>
         """, unsafe_allow_html=True)
