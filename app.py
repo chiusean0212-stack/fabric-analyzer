@@ -75,7 +75,7 @@ if uploaded_file is not None:
         projection = np.mean(sobelx, axis=0) - np.mean(np.mean(sobelx, axis=0))
         fft_result = np.fft.rfft(projection)
         magnitudes = np.abs(fft_result)
-        search_range = magnitudes[15:45]
+        search_range = magnitudes[10:60]
         wpi_result = np.argmax(search_range) + 15
 
     st.markdown(f"""
@@ -86,4 +86,5 @@ if uploaded_file is not None:
 
 st.divider()
 st.caption("© 2026 廣笠機械 Goang Lih | 專業針織機械製造 | AI 數位轉型專案")
+
 
