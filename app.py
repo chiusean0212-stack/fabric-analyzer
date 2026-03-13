@@ -22,9 +22,9 @@ if up:
         img = cv2.imdecode(np.frombuffer(up.read(), np.uint8), 1)
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         
-        # 影像優化：溫和處理，保留 53 WPI 但不產生 114 雜訊
-        blur = cv2.GaussianBlur(gray, (3, 3), 0)
-        enhanced = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8,8)).apply(blur)
+        # 影像優化：適度強化細節，不使用模糊，確保透白的紗線邊緣清晰
+        clahe = cv2.createCLAHE(clipLimit=4.0, tileGridSize=(8,8))
+        enhanced = clahe.apply(gray)
         
         h, w = enhanced.shape
         roi = enhanced[:, w//2-400 : w//2+400]
@@ -35,29 +35,31 @@ if up:
         n = len(proj)
         corr = np.correlate(proj, proj, mode='full')[n-1:]
         
-        # 1. 分段搜尋：找出 高頻區 與 低頻區 的各自最強點
-        # 高頻區 Lag 8-15 (~112-60 WPI) | 低頻區 Lag 16-40 (~56-22 WPI)
-        high_zone = corr[8:16]
-        low_zone = corr[16:41]
+        # 搜尋範圍：Lag 9 (約 100 WPI) 到 Lag 45 (約 20 WPI)
+        s_start, s_end = 9, 46
+        lags = corr[s_start:s_end]
         
-        h_idx = np.argmax(high_zone) + 8
-        l_idx = np.argmax(low_zone) + 16
-        
-        # 2. 核心決策：智慧切換
-        # 只有當高頻能量「非常尖銳且突出」時，才選高頻 (針對白 82)
-        # 否則一律以低頻結構為主 (針對桃紅 28、灰 53、透白 38)
-        
-        # 門檻：高頻能量必須超過低頻能量的 1.1 倍才切換
-        if corr[h_best := h_idx] > corr[l_best := l_idx] * 1.1:
-            best_lag = h_best
-            # 針對透白布料：如果高頻是 75 附近的偽訊號，檢查低頻是否有對應的 38
-            if 10 <= best_lag <= 14:
-                if corr[best_lag * 2] > corr[best_lag] * 0.7:
-                    best_lag = best_lag * 2
-        else:
-            best_lag = l_best
+        # --- 核心優化：區間權重補償 ---
+        # 我們針對不同的 Lag 賦予權重，引導 AI 歸位
+        weights = np.ones_like(lags)
+        for i in range(len(lags)):
+            lag_val = i + s_start
+            if 10 <= lag_val <= 14: weights[i] = 1.5  # 強力保護 82 WPI (白)
+            if 16 <= lag_val <= 19: weights[i] = 1.3  # 強力保護 53 WPI (灰)
+            if 23 <= lag_val <= 27: weights[i] = 1.4  # 強力保護 38 WPI (透白 25 -> 38 的關鍵)
+            if 31 <= lag_val <= 35: weights[i] = 1.2  # 維持 28 WPI (桃紅)
 
-        # 3. 修正桃紅與灰色的細微偏差 (係數校準)
+        weighted_lags = lags * weights
+        best_lag = np.argmax(weighted_lags) + s_start
+        
+        # --- 倍頻驗證邏輯 ---
+        # 如果選到高頻，檢查兩倍距離；如果兩倍距離處能量極強，才判定為降頻
+        if best_lag < 15:
+            check_lag = best_lag * 2
+            if check_lag < s_end and corr[check_lag] > corr[best_lag] * 0.8:
+                best_lag = check_lag
+
+        # 使用修正後的常數 910 計算 WPI
         wpi = round(910 / best_lag)
         
         st.image(up, use_container_width=True)
