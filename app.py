@@ -4,10 +4,10 @@ import numpy as np
 from PIL import Image
 import os
 
-# --- 頁面設定 ---
+# --- 1. 頁面基本設定 ---
 st.set_page_config(page_title="廣笠機械 Goang Lih - AI Analysis", layout="centered")
 
-# --- 語系字典 (Dictionary) ---
+# --- 2. 語系字典設定 ---
 lang_dict = {
     "繁體中文": {
         "login_title": "系統授權登入",
@@ -15,11 +15,11 @@ lang_dict = {
         "login_btn": "進入系統",
         "login_err": "密碼驗證失敗，請重新輸入",
         "app_subtitle": "AI 分析系統",
-        "upload_label": "📸 點擊或拖曳上傳 FiberCatch 照片",
+        "upload_label": "📸 點擊或拖曳上傳 FiberCatch 照片 (支援至 100 WPI)",
         "result_title": "偵測結果",
         "footer_motto": "智慧針織 · 領先未來",
         "footer_sub": "專業針織機械製造與 AI 數位化解決方案",
-        "analyzing": "分析中...",
+        "analyzing": "精細掃描中...",
         "err_msg": "分析發生錯誤"
     },
     "English": {
@@ -28,7 +28,7 @@ lang_dict = {
         "login_btn": "Login",
         "login_err": "Authentication failed. Please try again.",
         "app_subtitle": "AI Analysis System",
-        "upload_label": "📸 Click or Drag to Upload FiberCatch Photo",
+        "upload_label": "📸 Click or Drag to Upload Photo (Supports up to 100 WPI)",
         "result_title": "Analysis Result",
         "footer_motto": "Smart Knitting · Leading Future",
         "footer_sub": "Professional Machinery & AI Digital Solutions",
@@ -37,28 +37,36 @@ lang_dict = {
     }
 }
 
-# --- 語言切換選擇器 (放置於側邊欄) ---
+# --- 3. 語言切換選擇器 (Sidebar) ---
 with st.sidebar:
     st.markdown("### 🌐 Language / 語言")
     selected_lang = st.selectbox("Select Language", ["繁體中文", "English"])
     texts = lang_dict[selected_lang]
 
-# --- 自定義 CSS ---
+# --- 4. 自定義 CSS (放大字體與美化上傳框) ---
 st.markdown(f"""
     <style>
     .stFileUploader label p {{
         font-size: 24px !important;
         font-weight: bold !important;
         color: #1E3A8A !important;
+        margin-bottom: 10px;
     }}
     .stFileUploader section {{
         border: 2px dashed #1E3A8A !important;
         border-radius: 15px !important;
+        padding: 20px !important;
+    }}
+    div.stButton > button:first-child {{
+        background-color: #1E3A8A;
+        color: white;
+        font-size: 18px;
+        border-radius: 10px;
     }}
     </style>
 """, unsafe_allow_html=True)
 
-# --- 專業版登入介面 ---
+# --- 5. 專業版登入介面 ---
 if "authenticated" not in st.session_state:
     st.session_state["authenticated"] = False
 
@@ -87,7 +95,7 @@ if not st.session_state["authenticated"]:
                     st.error(texts['login_err'])
     st.stop()
 
-# --- 主介面標題 (登入後) ---
+# --- 6. 主介面標題與 Logo ---
 col1, col2 = st.columns([1, 4])
 with col1:
     if os.path.exists("LOGO.png"):
@@ -103,61 +111,46 @@ with col2:
 
 st.divider()
 
-# --- 檔案上傳 ---
+# --- 7. 檔案上傳與核心分析 ---
 uploaded_file = st.file_uploader(texts['upload_label'], type=['jpg', 'jpeg', 'png'])
 
 if uploaded_file is not None:
     try:
         with st.spinner(texts['analyzing']):
+            # 讀取圖片
             file_bytes = np.frombuffer(uploaded_file.read(), np.uint8)
             img = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
             
-            # 核心演算法
+            # --- 精細演算核心 (支援 100 WPI) ---
             img_gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-            img_blurred = cv2.GaussianBlur(img_gray, (3, 3), 0)
-            clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8,8))
-            enhanced = clahe.apply(img_blurred)
+            
+            # 使用 MedianBlur(3) 取代 GaussianBlur，以保留極細線圈邊緣
+            img_clean = cv2.medianBlur(img_gray, 3)
+            
+            # 強力對比增強 (針對黑色、米色、細微布樣)
+            clahe = cv2.createCLAHE(clipLimit=4.0, tileGridSize=(4,4))
+            enhanced = clahe.apply(img_clean)
             
             h, w = enhanced.shape
             x_start = max(0, w // 2 - 450)
             x_end = min(w, x_start + 900)
             roi = enhanced[:, x_start:x_end]
 
+            # 梯度特徵提取 (強化三角形線圈結構)
             grad_x = cv2.Sobel(roi, cv2.CV_64F, 1, 0, ksize=3)
             grad_y = cv2.Sobel(roi, cv2.CV_64F, 0, 1, ksize=3)
             grad_mag = cv2.magnitude(grad_x, grad_y)
             
+            # 投影與自相關分析
             projection = np.mean(grad_mag, axis=0).astype(np.float32)
             projection -= np.mean(projection)
             
             n = len(projection)
             corr = np.correlate(projection, projection, mode='full')[n-1:]
             
-            search_start, search_end = 15, 65 
+            # --- 修改搜尋範圍：Lag 8 (112 WPI) 到 Lag 90 (10 WPI) ---
+            search_start, search_end = 8, 90 
             lags = corr[search_start:search_end]
+            
             best_lag = np.argmax(lags) + search_start
-            wpi_result = round(900 / best_lag)
-            
-            # 顯示結果
-            st.image(uploaded_file, caption=selected_lang, use_container_width=True)
-            
-            st.markdown(f"""
-                <div style="text-align: center; background-color: #f0f2f6; padding: 25px; border-radius: 15px; border: 2px solid #1E3A8A; margin-top: 20px;">
-                    <h2 style="color: #1E3A8A; margin-top: 0;">{texts['result_title']}</h2>
-                    <span style="font-size: 85px; font-weight: bold; color: #FF0000;">WPI = {wpi_result}</span>
-                </div>
-            """, unsafe_allow_html=True)
-
-    except Exception as e:
-        st.error(f"{texts['err_msg']}: {e}")
-
-# --- 頁尾資訊 ---
-st.markdown("<br><br>", unsafe_allow_html=True)
-st.divider()
-st.markdown(f"""
-    <div style="text-align: center; color: #666;">
-        <p style="font-size: 18px; font-weight: bold; color: #1E3A8A;">{texts['footer_motto']}</p>
-        <p style="font-size: 14px;">{texts['footer_sub']}</p>
-        <p style="font-size: 12px; margin-top: 10px;">© 2026 Goang Lih Machinery Co., Ltd. All rights reserved.</p>
-    </div>
-""", unsafe_allow_html=True)
+            wpi_result = round(900 / best_
