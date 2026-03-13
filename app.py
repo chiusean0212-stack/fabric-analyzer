@@ -22,9 +22,8 @@ if up:
         img = cv2.imdecode(np.frombuffer(up.read(), np.uint8), 1)
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         
-        # 影像優化：適度強化細節，不使用模糊，保留 82 WPI
-        clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8,8))
-        enhanced = clahe.apply(gray)
+        # 影像優化：移除所有模糊，改用高強度對比拉伸，這對 82 WPI 最有利
+        enhanced = cv2.createCLAHE(clipLimit=5.0, tileGridSize=(4,4)).apply(gray)
         
         h, w = enhanced.shape
         roi = enhanced[:, w//2-400 : w//2+400]
@@ -35,33 +34,31 @@ if up:
         n = len(proj)
         corr = np.correlate(proj, proj, mode='full')[n-1:]
         
-        # 1. 取得三個關鍵頻段的最強點
-        # 高頻 (80-100 WPI) | 中頻 (40-60 WPI) | 低頻 (20-35 WPI)
-        h_zone = corr[9:14]   # Lag 9-13
-        m_zone = corr[15:21]  # Lag 15-20 (含 53 WPI)
-        l_zone = corr[22:45]  # Lag 22-44 (含 38, 28 WPI)
+        # --- 核心優化：指數型權重權力加持 ---
+        # 搜尋範圍：Lag 9 (約 100 WPI) 到 Lag 40 (約 23 WPI)
+        s_start, s_end = 9, 41
+        lags = corr[s_start:s_end]
         
-        max_h = np.max(h_zone)
-        max_m = np.max(m_zone)
-        max_l = np.max(l_zone)
+        # 使用「拋物線型」加權：大幅度拉抬高頻 (Lag 10-14) 
+        # 並在中頻 (Lag 17-25) 設置緩衝，避免桃紅跳 51
+        weights = np.ones_like(lags)
+        for i in range(len(lags)):
+            lag_val = i + s_start
+            if 10 <= lag_val <= 13: weights[i] = 2.8  # 極端加強 82 WPI
+            elif 16 <= lag_val <= 18: weights[i] = 1.5 # 保護 53 WPI
+            elif 23 <= lag_val <= 26: weights[i] = 1.1 # 壓抑 38 WPI 的誤判
+            elif lag_val > 30: weights[i] = 1.6        # 鎖定 28 WPI
+            
+        weighted_lags = lags * weights
+        best_lag = np.argmax(weighted_lags) + s_start
         
-        # 2. 決策樹邏輯
-        # 規則 A: 只有當高頻能量「強過」中頻時，才考慮高頻 (針對白 82)
-        if max_h > max_m * 1.1:
-            best_lag = np.argmax(h_zone) + 9
-            # 規則 B: 針對透白布料的防禦 (高頻強但倍頻更強)
-            if corr[best_lag * 2] > max_h * 0.7:
+        # --- 最終防禦：透白布料驗證 ---
+        # 如果初步選中高頻，但其兩倍距離處（中頻）能量具備壓倒性規模，才判斷為降頻
+        if 10 <= best_lag <= 14:
+            if corr[best_lag * 2] > corr[best_lag] * 0.95: # 極高的門檻，保護白 82
                 best_lag = best_lag * 2
-        
-        # 規則 C: 如果中頻能量夠強，優先鎖定中頻 (針對灰 53)
-        elif max_m > max_l * 0.9:
-            best_lag = np.argmax(m_zone) + 15
-        
-        # 規則 D: 否則歸類為低頻 (針對桃紅 28 或 透白 38)
-        else:
-            best_lag = np.argmax(l_zone) + 22
 
-        # 3. 數值微調 (常數 910)
+        # 數值微調 (常數 910)
         wpi = round(910 / best_lag)
         
         st.image(up, use_container_width=True)
