@@ -7,28 +7,45 @@ import os
 # --- 頁面設定 ---
 st.set_page_config(page_title="廣笠機械 Goang Lih - AI Analysis", layout="centered")
 
-# --- 密碼檢查 (維持 777) ---
+# --- 專業版登入介面 ---
 if "authenticated" not in st.session_state:
     st.session_state["authenticated"] = False
 
 if not st.session_state["authenticated"]:
-    st.markdown("<h2 style='text-align: center;'>系統授權登入</h2>", unsafe_allow_html=True)
-    pwd = st.text_input("請輸入密碼 (Password)", type="password")
-    if st.button("登入"):
-        if pwd == "777":
-            st.session_state["authenticated"] = True
-            st.rerun()
-        else:
-            st.error("密碼錯誤")
+    # 建立一個置中的容器
+    st.markdown("<br><br>", unsafe_allow_html=True)
+    login_col_1, login_col_2, login_col_3 = st.columns([1, 2, 1])
+    
+    with login_col_2:
+        st.markdown("""
+            <div style="text-align: center; background-color: white; padding: 30px; border-radius: 20px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); border: 1px solid #eee;">
+                <h1 style="color: #1E3A8A; margin-bottom: 5px;">廣笠機械</h1>
+                <h2 style="color: #FF0000; margin-top: 0; font-size: 24px;">Goang Lih</h2>
+                <hr style="border: 0.5px solid #eee;">
+                <p style="color: #666; font-size: 16px;">AI 分析系統 - 授權登入</p>
+            </div>
+        """, unsafe_allow_html=True)
+        
+        # 登入表單容器
+        with st.form("login_form"):
+            pwd = st.text_input("請輸入系統授權密碼", type="password", placeholder="Password")
+            submit = st.form_submit_button("進入系統", use_container_width=True)
+            if submit:
+                if pwd == "777":
+                    st.session_state["authenticated"] = True
+                    st.rerun()
+                else:
+                    st.error("密碼驗證失敗，請重新輸入")
+                    
+        st.markdown("<p style='text-align: center; color: #999; font-size: 12px;'>© 2026 Goang Lih Machinery Co., Ltd.</p>", unsafe_allow_html=True)
     st.stop()
 
-# --- 主介面標題與 Logo ---
+# --- 主介面標題與 Logo (登入後顯示) ---
 col1, col2 = st.columns([1, 4])
 with col1:
     if os.path.exists("LOGO.png"):
         st.image("LOGO.png", width=100)
 with col2:
-    # 廣笠機械為藍色 (#1E3A8A)，Goang Lih 為紅色 (#FF0000)
     st.markdown("""
         <h1 style='margin-bottom: 0;'>
             <span style='color: #1E3A8A;'>廣笠機械</span> 
@@ -48,7 +65,7 @@ if uploaded_file is not None:
         file_bytes = np.frombuffer(uploaded_file.read(), np.uint8)
         img = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
         
-        # 1. 預處理：溫和降噪與高對比
+        # 1. 預處理：維持溫和降噪與高對比
         img_gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         img_blurred = cv2.GaussianBlur(img_gray, (3, 3), 0)
         clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8,8))
@@ -72,7 +89,7 @@ if uploaded_file is not None:
         n = len(projection)
         corr = np.correlate(projection, projection, mode='full')[n-1:]
         
-        # 5. 倍頻鎖定與範圍優化 (解決米色 22 變 12 問題)
+        # 5. 倍頻鎖定與範圍優化
         search_start, search_end = 15, 65 
         lags = corr[search_start:search_end]
         best_lag = np.argmax(lags) + search_start
