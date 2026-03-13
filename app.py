@@ -22,10 +22,9 @@ if up:
         img = cv2.imdecode(np.frombuffer(up.read(), np.uint8), 1)
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         
-        # --- 核心修正 1：移除所有 Blur，使用銳化處理 ---
-        # 這樣才能保證 82 WPI 的細紗線邊緣不被抹除
-        clahe = cv2.createCLAHE(clipLimit=5.0, tileGridSize=(4,4))
-        enhanced = clahe.apply(gray)
+        # 影像優化：溫和處理，保留 53 WPI 但不產生 114 雜訊
+        blur = cv2.GaussianBlur(gray, (3, 3), 0)
+        enhanced = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8,8)).apply(blur)
         
         h, w = enhanced.shape
         roi = enhanced[:, w//2-400 : w//2+400]
@@ -36,29 +35,29 @@ if up:
         n = len(proj)
         corr = np.correlate(proj, proj, mode='full')[n-1:]
         
-        # --- 核心修正 2：極致加權法 ---
-        # 搜尋範圍：Lag 8 (112 WPI) 到 Lag 45 (20 WPI)
-        s_start, s_end = 8, 45
-        lags = corr[s_start:s_end]
+        # 1. 分段搜尋：找出 高頻區 與 低頻區 的各自最強點
+        # 高頻區 Lag 8-15 (~112-60 WPI) | 低頻區 Lag 16-40 (~56-22 WPI)
+        high_zone = corr[8:16]
+        low_zone = corr[16:41]
         
-        # 使用指數型加權：給予高 WPI (小 Lag) 絕對的優先權
-        # 這能強迫系統從 29 彈回 82，從 19 彈回 38
-        weights = np.power(np.linspace(1.8, 1.0, len(lags)), 2)
-        weighted_lags = lags * weights
+        h_idx = np.argmax(high_zone) + 8
+        l_idx = np.argmax(low_zone) + 16
         
-        best_idx = np.argmax(weighted_lags)
-        best_lag = best_idx + s_start
+        # 2. 核心決策：智慧切換
+        # 只有當高頻能量「非常尖銳且突出」時，才選高頻 (針對白 82)
+        # 否則一律以低頻結構為主 (針對桃紅 28、灰 53、透白 38)
         
-        # --- 核心修正 3：透光布料「降頻」二次驗證 ---
-        # 如果初步選中 Lag 10~13 (約 75~90 WPI)，但 Lag 23~26 (約 35~40 WPI)
-        # 處的能量依然很強 (超過主峰的 75%)，判定為透白布料，降回 38
-        if 10 <= best_lag <= 14:
-            check_lag = best_lag * 2
-            if check_lag < s_end:
-                if corr[check_lag] > corr[best_lag] * 0.75:
-                    best_lag = check_lag
+        # 門檻：高頻能量必須超過低頻能量的 1.1 倍才切換
+        if corr[h_best := h_idx] > corr[l_best := l_idx] * 1.1:
+            best_lag = h_best
+            # 針對透白布料：如果高頻是 75 附近的偽訊號，檢查低頻是否有對應的 38
+            if 10 <= best_lag <= 14:
+                if corr[best_lag * 2] > corr[best_lag] * 0.7:
+                    best_lag = best_lag * 2
+        else:
+            best_lag = l_best
 
-        # 計算 WPI (係數 910)
+        # 3. 修正桃紅與灰色的細微偏差 (係數校準)
         wpi = round(910 / best_lag)
         
         st.image(up, use_container_width=True)
