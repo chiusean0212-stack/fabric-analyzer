@@ -22,7 +22,7 @@ if up:
         img_bgr = cv2.imdecode(np.frombuffer(up.read(), np.uint8), 1)
         gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
         
-        # 影像優化：使用中度 CLAHE，保留細節但不產生過多雜訊
+        # 影像優化：適中強化，確保從細紗到粗針都能捕捉
         enhanced = cv2.createCLAHE(clipLimit=3.5, tileGridSize=(8,8)).apply(gray)
         
         h, w = enhanced.shape
@@ -33,25 +33,33 @@ if up:
         n = len(proj)
         corr = np.correlate(proj, proj, mode='full')[n-1:]
 
-        # --- 核心邏輯：多頻段競爭 (不分顏色) ---
-        # 抓取四個關鍵 WPI 區間的能量
-        # 82 WPI (Lag 10-12) | 53 WPI (Lag 16-18) | 38 WPI (Lag 23-25) | 28 WPI (Lag 31-34)
+        # --- 五大核心 WPI 區間能量檢測 ---
+        # 82 WPI: Lag 10-12
+        # 53 WPI: Lag 16-18
+        # 38 WPI: Lag 23-26
+        # 28 WPI: Lag 31-35
+        # 21 WPI: Lag 40-45 (米黃色區間)
+        
         e_82 = np.max(corr[10:13])
         e_53 = np.max(corr[16:19])
-        e_38 = np.max(corr[23:26])
-        e_28 = np.max(corr[31:35])
+        e_38 = np.max(corr[23:27])
+        e_28 = np.max(corr[31:36])
+        e_21 = np.max(corr[40:46]) # 新增米黃色頻段
         
-        # 判定順序 (權重微調)
-        # 1. 如果 82 WPI 能量非常集中且強大 (針對白布)
-        if e_82 > e_53 * 1.2 and e_82 > e_38 * 1.2:
+        # --- 動態決策邏輯 ---
+        # 1. 高密白布優先判斷
+        if e_82 > e_53 * 1.3 and e_82 > e_38 * 1.3:
             final_wpi = 82
-        # 2. 如果 53 WPI 能量勝出 (針對灰色)
-        elif e_53 > e_82 * 1.0 and e_53 > e_38 * 1.1:
+        # 2. 灰色中密布
+        elif e_53 > e_82 * 0.9 and e_53 > e_38 * 1.2:
             final_wpi = 53
-        # 3. 如果 38 WPI 與 82 WPI 能量接近 (針對透白，透光會產生兩倍頻)
+        # 3. 透白布 (具有 82 與 38 的複合能量)
         elif e_38 > e_82 * 0.7 and e_38 > e_28 * 1.1:
             final_wpi = 38
-        # 4. 其他情況歸類為 28 (針對桃紅)
+        # 4. 米黃色 (極低頻區，能量通常分布在較寬的 Lag)
+        elif e_21 > e_28 * 1.05: # 如果 21 WPI 能量超越 28 WPI，則判定為米黃
+            final_wpi = 21
+        # 5. 桃紅色 (剩下的低頻主力)
         else:
             final_wpi = 28
 
