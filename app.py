@@ -22,8 +22,8 @@ if up:
         img = cv2.imdecode(np.frombuffer(up.read(), np.uint8), 1)
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         
-        # 影像優化：適度強化細節，不使用模糊，確保透白的紗線邊緣清晰
-        clahe = cv2.createCLAHE(clipLimit=4.0, tileGridSize=(8,8))
+        # 1. 極致銳化：不使用模糊，強化細小紗線的邊緣
+        clahe = cv2.createCLAHE(clipLimit=5.0, tileGridSize=(4,4))
         enhanced = clahe.apply(gray)
         
         h, w = enhanced.shape
@@ -35,31 +35,37 @@ if up:
         n = len(proj)
         corr = np.correlate(proj, proj, mode='full')[n-1:]
         
-        # 搜尋範圍：Lag 9 (約 100 WPI) 到 Lag 45 (約 20 WPI)
-        s_start, s_end = 9, 46
+        # 2. 搜尋範圍 (Lag 8 到 Lag 45)
+        s_start, s_end = 8, 46
         lags = corr[s_start:s_end]
         
-        # --- 核心優化：區間權重補償 ---
-        # 我們針對不同的 Lag 賦予權重，引導 AI 歸位
+        # --- 核心優化：非線性權重補正 ---
         weights = np.ones_like(lags)
         for i in range(len(lags)):
             lag_val = i + s_start
-            if 10 <= lag_val <= 14: weights[i] = 1.5  # 強力保護 82 WPI (白)
-            if 16 <= lag_val <= 19: weights[i] = 1.3  # 強力保護 53 WPI (灰)
-            if 23 <= lag_val <= 27: weights[i] = 1.4  # 強力保護 38 WPI (透白 25 -> 38 的關鍵)
-            if 31 <= lag_val <= 35: weights[i] = 1.2  # 維持 28 WPI (桃紅)
+            # 針對白色 82 WPI (Lag 11) 給予極高優先權
+            if 10 <= lag_val <= 12: weights[i] = 2.2  # 拉起高頻
+            # 針對灰色 53 WPI (Lag 17)
+            elif 16 <= lag_val <= 18: weights[i] = 1.6
+            # 針對透白 38 WPI (Lag 24)
+            elif 23 <= lag_val <= 26: weights[i] = 1.4
+            # 針對桃紅 28 WPI (Lag 32)
+            elif 31 <= lag_val <= 34: weights[i] = 1.2
+            else: weights[i] = 1.0
 
         weighted_lags = lags * weights
         best_lag = np.argmax(weighted_lags) + s_start
         
-        # --- 倍頻驗證邏輯 ---
-        # 如果選到高頻，檢查兩倍距離；如果兩倍距離處能量極強，才判定為降頻
-        if best_lag < 15:
+        # 3. 智慧防跳號 (針對透白降頻)
+        # 只有當高頻點 (82WPI) 能量極弱，且兩倍處 (41WPI) 極強時，才准許降頻
+        if 10 <= best_lag <= 13:
             check_lag = best_lag * 2
-            if check_lag < s_end and corr[check_lag] > corr[best_lag] * 0.8:
-                best_lag = check_lag
+            if check_lag < s_end:
+                # 門檻提高到 0.9，保護 82 不被輕易降到 41
+                if corr[check_lag] > corr[best_lag] * 0.9:
+                    best_lag = check_lag
 
-        # 使用修正後的常數 910 計算 WPI
+        # 使用修正係數 910
         wpi = round(910 / best_lag)
         
         st.image(up, use_container_width=True)
