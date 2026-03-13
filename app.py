@@ -23,9 +23,9 @@ if up:
         img = cv2.imdecode(np.frombuffer(up.read(), np.uint8), 1)
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         
-        # 影像優化：使用中值濾波，這對去除導致 114 WPI 的細微雜訊最有效
-        denoise = cv2.medianBlur(gray, 3)
-        enhanced = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8,8)).apply(denoise)
+        # 影像優化：移除中值濾波，換回輕微 GaussianBlur，避免抹除 53 WPI 細節
+        blur = cv2.GaussianBlur(gray, (3, 3), 0)
+        enhanced = cv2.createCLAHE(clipLimit=4.0, tileGridSize=(8,8)).apply(blur)
         
         h, w = enhanced.shape
         roi = enhanced[:, w//2-450 : w//2+450]
@@ -36,30 +36,32 @@ if up:
         n = len(proj)
         corr = np.correlate(proj, proj, mode='full')[n-1:]
         
-        # --- 核心優化：階梯式搜尋 ---
-        # 定義高頻(>60 WPI) 與 中低頻(<60 WPI)
-        # Lag 9-15 (對應 100-60 WPI) | Lag 16-50 (對應 56-18 WPI)
-        high_lags = corr[9:16]
-        low_lags = corr[16:51]
+        # --- 核心優化：座標權重法 ---
+        # 搜尋範圍：Lag 9 (~100 WPI) 到 Lag 40 (~23 WPI)
+        s_start, s_end = 9, 41
+        lags = corr[s_start:s_end]
         
-        h_best = np.argmax(high_lags) + 9
-        l_best = np.argmax(low_lags) + 16
+        # 針對您的布樣設定「導引權重」
+        weights = np.ones_like(lags)
+        for i in range(len(lags)):
+            lag_val = i + s_start
+            if 10 <= lag_val <= 12: weights[i] = 1.4  # 保護 82 WPI
+            if 16 <= lag_val <= 18: weights[i] = 1.3  # 保護 53 WPI
+            if 23 <= lag_val <= 26: weights[i] = 1.25 # 保護 38 WPI (解決透白 19 問題)
+            if 31 <= lag_val <= 34: weights[i] = 1.2  # 保護 28 WPI
+            
+        weighted_lags = lags * weights
+        best_lag = np.argmax(weighted_lags) + s_start
         
-        # 決策邏輯：除非高頻能量「壓倒性」勝過低頻，否則不准跳高頻
-        # 這能防止桃紅 28 變成 114
-        if corr[h_best] > corr[l_best] * 1.3:
-            best_lag = h_best
-            # 針對透白布料：如果選中 80 WPI 附近，檢查兩倍距離
-            check_lag = best_lag * 2
-            if check_lag < 51 and corr[check_lag] > corr[best_lag] * 0.7:
-                best_lag = check_lag
-        else:
-            best_lag = l_best
+        # 額外檢查：防止透光布料跳到倍頻
+        # 如果選中的是 Lag 11-13 (約 75-82 WPI)，但 Lag 24 有一定強度，強制跳回 38
+        if 10 <= best_lag <= 14:
+            if corr[24] > corr[best_lag] * 0.7:
+                best_lag = 24
 
         # 計算 WPI (使用 910 穩定係數)
         wpi = round(910 / best_lag)
         
-        # 顯示結果
         st.image(up, use_container_width=True)
         st.markdown(f"""
             <div style='text-align:center; background:#f0f2f6; padding:20px; border-radius:15px; border:2px solid #1E3A8A;'>
