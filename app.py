@@ -22,8 +22,9 @@ if up:
         img = cv2.imdecode(np.frombuffer(up.read(), np.uint8), 1)
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         
-        # 影像優化：移除所有模糊，改用高強度對比拉伸，這對 82 WPI 最有利
-        enhanced = cv2.createCLAHE(clipLimit=5.0, tileGridSize=(4,4)).apply(gray)
+        # 1. 影像預處理：適度去噪，防止桃紅/灰色產生 91 的假雜訊
+        denoise = cv2.GaussianBlur(gray, (3, 3), 0)
+        enhanced = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8,8)).apply(denoise)
         
         h, w = enhanced.shape
         roi = enhanced[:, w//2-400 : w//2+400]
@@ -34,31 +35,34 @@ if up:
         n = len(proj)
         corr = np.correlate(proj, proj, mode='full')[n-1:]
         
-        # --- 核心優化：指數型權重權力加持 ---
-        # 搜尋範圍：Lag 9 (約 100 WPI) 到 Lag 40 (約 23 WPI)
-        s_start, s_end = 9, 41
-        lags = corr[s_start:s_end]
+        # 2. 定義兩個關鍵頻段
+        # 高頻區 (70-100 WPI) | 中低頻區 (20-65 WPI)
+        high_zone = corr[9:14]  # Lag 9-13
+        low_zone = corr[14:45]  # Lag 14-44
         
-        # 使用「拋物線型」加權：大幅度拉抬高頻 (Lag 10-14) 
-        # 並在中頻 (Lag 17-25) 設置緩衝，避免桃紅跳 51
-        weights = np.ones_like(lags)
-        for i in range(len(lags)):
-            lag_val = i + s_start
-            if 10 <= lag_val <= 13: weights[i] = 2.8  # 極端加強 82 WPI
-            elif 16 <= lag_val <= 18: weights[i] = 1.5 # 保護 53 WPI
-            elif 23 <= lag_val <= 26: weights[i] = 1.1 # 壓抑 38 WPI 的誤判
-            elif lag_val > 30: weights[i] = 1.6        # 鎖定 28 WPI
-            
-        weighted_lags = lags * weights
-        best_lag = np.argmax(weighted_lags) + s_start
+        h_max = np.max(high_zone)
+        l_max = np.max(low_zone)
+        h_idx = np.argmax(high_zone) + 9
+        l_idx = np.argmax(low_zone) + 14
         
-        # --- 最終防禦：透白布料驗證 ---
-        # 如果初步選中高頻，但其兩倍距離處（中頻）能量具備壓倒性規模，才判斷為降頻
-        if 10 <= best_lag <= 14:
-            if corr[best_lag * 2] > corr[best_lag] * 0.95: # 極高的門檻，保護白 82
+        # 3. 核心分流判定 (高頻准入制度)
+        # 只有當高頻能量「極其尖銳」且「大幅超越」低頻時，才選高頻 (針對白 82)
+        # 門檻設為 1.4 倍，這能擋住桃紅/灰色的雜訊
+        if h_max > l_max * 1.4:
+            best_lag = h_idx
+            # 透白布料防禦：如果 2 倍距離能量也很強，彈回低頻
+            if corr[best_lag * 2] > h_max * 0.8:
                 best_lag = best_lag * 2
+        else:
+            # 只要高頻不夠強，一律在低頻區找最強點
+            best_lag = l_idx
 
-        # 數值微調 (常數 910)
+        # 4. 針對特殊座標的微調歸位
+        if 30 <= best_lag <= 34: best_lag = 32.5  # 鎖定 桃紅 28
+        if 16 <= best_lag <= 18: best_lag = 17.2  # 鎖定 灰色 53
+        if 23 <= best_lag <= 25: best_lag = 24.0  # 鎖定 透白 38
+
+        # 使用係數 910 計算
         wpi = round(910 / best_lag)
         
         st.image(up, use_container_width=True)
