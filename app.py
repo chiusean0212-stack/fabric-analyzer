@@ -76,7 +76,7 @@ if uploaded_file is not None:
         fft_result = np.fft.rfft(projection)
         magnitudes = np.abs(fft_result)
         search_range = magnitudes[10:60]
-        wpi_result = np.argmax(search_range) + 15
+        wpi_result = np.argmax(search_range) + 10
 
     st.markdown(f"""
         <div class="result-box">
@@ -86,5 +86,6 @@ if uploaded_file is not None:
 
 st.divider()
 st.caption("© 2026 廣笠機械 Goang Lih | 專業針織機械製造 | AI 數位轉型專案")
+
 
 
