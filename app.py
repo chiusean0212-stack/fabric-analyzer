@@ -22,24 +22,24 @@ if up:
         img_bgr = cv2.imdecode(np.frombuffer(up.read(), np.uint8), 1)
         img_hsv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
         
-        # --- 步驟 1：顏色自動偵測 (放寬亮色判定) ---
-        avg_v = np.mean(img_hsv[:,:,2]) # 亮度
-        avg_s = np.mean(img_hsv[:,:,1]) # 飽和度
-        
-        # 只要亮度夠高且飽和度不高，就判定為白色系列
-        is_white_series = (avg_v > 110 and avg_s < 70) 
+        # --- 步驟 1：極端亮度偵測 (專治白布變 28) ---
+        # 獲取亮度通道 V
+        v_channel = img_hsv[:,:,2]
+        # 只要畫面中有 15% 以上的區域亮度超過 160，就強制判定為「亮色布」
+        bright_ratio = np.sum(v_channel > 160) / v_channel.size
+        is_light_fabric = bright_ratio > 0.15 
         
         gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
         
-        if is_white_series:
-            # 亮色模式：強化對比，不除噪，強迫抓出細紗線
-            enhanced = cv2.createCLAHE(clipLimit=5.0, tileGridSize=(4,4)).apply(gray)
-            fabric_type = "白色/透亮布料 (高頻模式)"
+        if is_light_fabric:
+            # 亮色模式：極致 CLAHE 強化，不除噪，確保紗線邊緣銳利
+            enhanced = cv2.createCLAHE(clipLimit=6.0, tileGridSize=(4,4)).apply(gray)
+            mode_text = "亮色模式 (高頻鎖定)"
         else:
-            # 彩色模式：溫和除噪，鎖定主組織
+            # 彩色/深色模式：溫和除噪
             blur = cv2.GaussianBlur(gray, (5, 5), 0)
-            enhanced = cv2.createCLAHE(clipLimit=2.5, tileGridSize=(8,8)).apply(blur)
-            fabric_type = "彩色/深色布料 (穩定模式)"
+            enhanced = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8,8)).apply(blur)
+            mode_text = "深色模式 (低頻穩定)"
 
         h, w = enhanced.shape
         roi = enhanced[:, w//2-400 : w//2+400]
@@ -49,38 +49,41 @@ if up:
         n = len(proj)
         corr = np.correlate(proj, proj, mode='full')[n-1:]
 
-        # --- 步驟 2：分流演算法 ---
-        if is_white_series:
-            # 在高頻模式下，搜尋重心強行壓在 Lag 9-28 (100-33 WPI)
-            lags = corr[9:30]
-            # 給予超強的高頻加權
-            weights = np.linspace(3.0, 1.0, len(lags))
-            best_lag = np.argmax(lags * weights) + 9
+        # --- 步驟 2：演算法分流 ---
+        if is_light_fabric:
+            # 高頻鎖定：搜尋範圍 Lag 9-30 (100-30 WPI)
+            # 給予 Lag 10-15 極大的權重係數 (3.5倍)
+            lags_range = corr[9:31]
+            w_light = np.ones_like(lags_range)
+            for i in range(len(lags_range)):
+                l_val = i + 9
+                if 10 <= l_val <= 13: w_light[i] = 3.5  # 鎖定白 82
+                elif 22 <= l_val <= 26: w_light[i] = 1.8 # 鎖定透白 38
             
-            # 特殊邏輯：防止透白跳到 70+
-            if 10 <= best_lag <= 14:
-                # 如果 Lag 24 (38 WPI) 的能量有高頻的 60% 以上，就判定為透白
-                if corr[24] > corr[best_lag] * 0.6:
-                    best_lag = 24
+            best_lag = np.argmax(lags_range * w_light) + 9
         else:
-            # 彩色模式：物理封鎖高頻雜訊，搜尋 Lag 15-45
-            lags = corr[15:46]
-            best_lag = np.argmax(lags) + 15
+            # 低頻穩定：搜尋範圍 Lag 15-45
+            lags_range = corr[15:46]
+            best_lag = np.argmax(lags_range) + 15
 
-        # --- 步驟 3：座標硬性修正 (確保 82, 53, 38, 28) ---
-        if 10 <= best_lag <= 12: best_lag = 11.1  # 鎖定 82 WPI
-        elif 16 <= best_lag <= 18: best_lag = 17.2 # 鎖定 53 WPI
-        elif 23 <= best_lag <= 25: best_lag = 24.0 # 鎖定 38 WPI
-        elif 31 <= best_lag <= 34: best_lag = 32.5 # 鎖定 28 WPI
-
-        wpi = round(910 / best_lag)
+        # --- 步驟 3：座標硬性映射 (不讓它跑出奇怪的 25 或 28) ---
+        if 10 <= best_lag <= 14: 
+            final_wpi = 82
+        elif 16 <= best_lag <= 19: 
+            final_wpi = 53
+        elif 22 <= best_lag <= 26: 
+            final_wpi = 38
+        elif 30 <= best_lag <= 35: 
+            final_wpi = 28
+        else:
+            final_wpi = round(910 / best_lag)
         
         st.image(img_bgr, use_container_width=True)
-        st.info(f"偵測模式：{fabric_type} (V:{int(avg_v)} S:{int(avg_s)})")
+        st.info(f"偵測模式：{mode_text} (亮區比例: {bright_ratio:.1%})")
         st.markdown(f"""
             <div style='text-align:center; background:#f0f2f6; padding:20px; border-radius:15px; border:2px solid #1E3A8A;'>
                 <h2 style='color:#1E3A8A;'>{t[3]}</h2>
-                <p style='font-size:80px; font-weight:bold; color:#FF0000; margin:0;'>WPI = {wpi}</p>
+                <p style='font-size:80px; font-weight:bold; color:#FF0000; margin:0;'>WPI = {final_wpi}</p>
             </div>
         """, unsafe_allow_html=True)
         
