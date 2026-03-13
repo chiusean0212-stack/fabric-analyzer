@@ -5,11 +5,9 @@ import os
 
 st.set_page_config(page_title="Goang Lih AI", layout="centered")
 
-# --- 介面文字 ---
-t_data = {
-    "繁體中文": ["廣笠機械", "AI 分析系統", "📸 上傳照片", "結果", "授權登入"],
-    "English": ["Goang Lih", "AI Analysis", "📸 Upload", "Result", "Login"]
-}
+# --- 介面文字與授權 ---
+t_data = {"繁體中文": ["廣笠機械", "AI 分析系統", "📸 上傳照片", "結果", "授權登入"],
+          "English": ["Goang Lih", "AI Analysis", "📸 Upload", "Result", "Login"]}
 sel = st.sidebar.selectbox("Lang", ["繁體中文", "English"])
 t = t_data[sel]
 
@@ -22,46 +20,43 @@ if not st.session_state["auth"]:
 
 st.title(f"{t[0]} Goang Lih")
 
+# --- 核心演算：低通頻率強化 ---
 up = st.file_uploader(t[2], type=['jpg', 'jpeg', 'png'])
 if up:
     try:
-        img = cv2.imdecode(np.frombuffer(up.read(), np.uint8), 1)
+        raw_bytes = np.frombuffer(up.read(), np.uint8)
+        img = cv2.imdecode(raw_bytes, 1)
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         
-        # 使用輕微去噪，確保 82 WPI 不失真
-        blur = cv2.GaussianBlur(gray, (3, 3), 0)
-        enhanced = cv2.createCLAHE(clipLimit=4.0, tileGridSize=(8,8)).apply(blur)
+        # 1. 關鍵修正：針對透白布料使用較大的中值濾波
+        # 這能有效抹除導致 75 WPI 的細微空隙雜訊，保留 38 WPI 的主紗線
+        denoise = cv2.medianBlur(gray, 5) 
+        
+        # 2. 強化結構對比
+        clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8,8))
+        enhanced = clahe.apply(denoise)
         
         h, w = enhanced.shape
         roi = enhanced[:, w//2-450 : w//2+450]
         
-        # 提取垂直邊緣
+        # 3. 垂直梯度投影
         grad_x = np.absolute(cv2.Sobel(roi, cv2.CV_64F, 1, 0, ksize=3))
         proj = np.mean(grad_x, axis=0).astype(np.float32)
         proj -= np.mean(proj)
         
+        # 4. 自相關分析
         n = len(proj)
         corr = np.correlate(proj, proj, mode='full')[n-1:]
         
-        # 搜尋範圍 (Lag 8=112WPI 到 Lag 65=14WPI)
-        s_start, s_end = 8, 65
+        # 5. 搜尋範圍 (Lag 10 ~ 65)
+        # 起點設為 10 (對應 90 WPI)，封殺 100 WPI 以上的超高頻錯誤
+        s_start, s_end = 10, 65
         lags = corr[s_start:s_end]
         
-        # 取得初步最強峰值
-        p1_idx = np.argmax(lags)
-        best_lag = p1_idx + s_start
+        # 6. 加入距離加權 (越寬的間距賦予越高權重，防止倍頻錯誤)
+        weights = np.linspace(1.0, 1.4, len(lags))
+        best_lag = np.argmax(lags * weights) + s_start
         
-        # --- 核心修正：透光布料倍頻壓制邏輯 ---
-        # 如果初步結果 > 70 WPI (即 Lag < 12.8)
-        if best_lag < 13:
-            # 檢查兩倍距離的 Lag (對應約 35-38 WPI)
-            check_lag = best_lag * 2
-            if check_lag < s_end:
-                # 如果兩倍距離處的訊號強度達到最強者的 75% 以上
-                # 代表原本的細訊號是「紗線+空隙」的誤判，應取較寬的兩倍距離
-                if corr[check_lag] > lags[p1_idx] * 0.75:
-                    best_lag = check_lag
-
         wpi = round(900 / best_lag)
         
         # 顯示結果
