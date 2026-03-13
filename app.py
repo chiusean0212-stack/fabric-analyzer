@@ -5,7 +5,6 @@ import os
 
 st.set_page_config(page_title="Goang Lih AI", layout="centered")
 
-# --- 簡約介面 ---
 t = {"繁體中文": ["廣笠機械", "AI 分析系統", "📸 上傳照片", "結果", "授權登入"],
      "English": ["Goang Lih", "AI Analysis", "📸 Upload", "Result", "Login"]}[st.sidebar.selectbox("Lang", ["繁體中文", "English"])]
 
@@ -18,40 +17,41 @@ if not st.session_state["auth"]:
 
 st.title(f"{t[0]} Goang Lih")
 
-# --- 核心演算：能量動態補償 ---
 up = st.file_uploader(t[2], type=['jpg', 'jpeg', 'png'])
 if up:
     try:
         img = cv2.imdecode(np.frombuffer(up.read(), np.uint8), 1)
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         
-        # 使用溫和的 GaussianBlur 確保細緻的 82 WPI 不被抹除
-        blur = cv2.GaussianBlur(gray, (3, 3), 0)
-        enhanced = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8,8)).apply(blur)
+        # --- 1. 核心修正：移除模糊，改用高對比銳化 ---
+        # 這樣 82 WPI 的細線才會比 41 WPI 的粗循環更明顯
+        enhanced = cv2.createCLAHE(clipLimit=5.0, tileGridSize=(8,8)).apply(gray)
         
         h, w = enhanced.shape
         roi = enhanced[:, w//2-400 : w//2+400]
-        grad_x = np.absolute(cv2.Sobel(roi, cv2.CV_64F, 1, 0, ksize=3))
         
+        # 使用 Sobel 提取垂直細節
+        grad_x = np.absolute(cv2.Sobel(roi, cv2.CV_64F, 1, 0, ksize=3))
         proj = np.mean(grad_x, axis=0).astype(np.float32)
         proj -= np.mean(proj)
+        
         n = len(proj)
         corr = np.correlate(proj, proj, mode='full')[n-1:]
         
-        # --- 關鍵修正：搜尋範圍與高頻權重 ---
-        # 搜尋區間 Lag 10 (~90 WPI) 到 Lag 45 (~20 WPI)
-        # 這能強制封殺 100 WPI 以上的雜訊，並防止跳到 20 WPI 以下的誤判
-        s_start, s_end = 10, 45 
+        # --- 2. 搜尋範圍擴大 (針對 15 - 110 WPI) ---
+        # Lag 8 (~112 WPI) 到 Lag 60 (~15 WPI)
+        s_start, s_end = 8, 60
         lags = corr[s_start:s_end]
         
-        # 採用遞減權重：讓高 WPI (小 Lag) 的訊號更容易被選中
-        # 這能解決「白色 82 變 41」以及「灰色 53 變 26」的問題
-        weights = np.linspace(1.3, 1.0, len(lags)) 
+        # --- 3. 採用「高頻優先加權」 ---
+        # 對較細的間距 (Lag 小的) 給予 1.5 倍到 1.0 倍的漸進補償
+        # 這是為了強迫 AI 從 41 跳回 82，從 26 跳回 53
+        weights = np.linspace(1.5, 1.0, len(lags))
         best_lag = np.argmax(lags * weights) + s_start
         
-        # --- 針對「透白 75」的最後防線 ---
-        # 如果初步結果 > 70 (Lag < 13)，我們檢查是否有 35-38 附近的強訊號
-        if best_lag < 13:
+        # --- 4. 針對「透白」的倍頻壓制 ---
+        # 如果初步偵測到超過 90 WPI (Lag < 10)，且 38 WPI 處有強訊號，才降頻
+        if best_lag < 11:
             check_lag = best_lag * 2
             if check_lag < s_end and corr[check_lag] > corr[best_lag] * 0.8:
                 best_lag = check_lag
