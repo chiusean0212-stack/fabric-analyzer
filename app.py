@@ -22,8 +22,8 @@ if up:
         img = cv2.imdecode(np.frombuffer(up.read(), np.uint8), 1)
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         
-        # 1. 極致銳化：不使用模糊，強化細小紗線的邊緣
-        clahe = cv2.createCLAHE(clipLimit=5.0, tileGridSize=(4,4))
+        # 影像優化：適中對比度，不使用模糊，保留 82 WPI
+        clahe = cv2.createCLAHE(clipLimit=3.5, tileGridSize=(8,8))
         enhanced = clahe.apply(gray)
         
         h, w = enhanced.shape
@@ -35,37 +35,32 @@ if up:
         n = len(proj)
         corr = np.correlate(proj, proj, mode='full')[n-1:]
         
-        # 2. 搜尋範圍 (Lag 8 到 Lag 45)
-        s_start, s_end = 8, 46
+        # 1. 取得全域最強點 (排除極高頻雜訊)
+        s_start, s_end = 9, 45
         lags = corr[s_start:s_end]
+        global_best_lag = np.argmax(lags) + s_start
         
-        # --- 核心優化：非線性權重補正 ---
-        weights = np.ones_like(lags)
-        for i in range(len(lags)):
-            lag_val = i + s_start
-            # 針對白色 82 WPI (Lag 11) 給予極高優先權
-            if 10 <= lag_val <= 12: weights[i] = 2.2  # 拉起高頻
-            # 針對灰色 53 WPI (Lag 17)
-            elif 16 <= lag_val <= 18: weights[i] = 1.6
-            # 針對透白 38 WPI (Lag 24)
-            elif 23 <= lag_val <= 26: weights[i] = 1.4
-            # 針對桃紅 28 WPI (Lag 32)
-            elif 31 <= lag_val <= 34: weights[i] = 1.2
-            else: weights[i] = 1.0
-
-        weighted_lags = lags * weights
-        best_lag = np.argmax(weighted_lags) + s_start
+        # 2. 核心邏輯：高頻准入制度 (專治 白 82 變 41 與 桃紅/灰 亂跳 91)
+        # 我們檢查 Lag 10-12 (約 82 WPI) 的訊號是否「足夠強」
+        high_freq_zone = corr[10:13]
+        max_high = np.max(high_freq_zone)
+        best_high_lag = np.argmax(high_freq_zone) + 10
         
-        # 3. 智慧防跳號 (針對透白降頻)
-        # 只有當高頻點 (82WPI) 能量極弱，且兩倍處 (41WPI) 極強時，才准許降頻
-        if 10 <= best_lag <= 13:
-            check_lag = best_lag * 2
-            if check_lag < s_end:
-                # 門檻提高到 0.9，保護 82 不被輕易降到 41
-                if corr[check_lag] > corr[best_lag] * 0.9:
-                    best_lag = check_lag
+        # 判定規則：
+        # 如果高頻區最強點的能量 > 全域最強點的 0.85 倍，
+        # 代表這可能是「白 82」，直接強制選取高頻點。
+        if max_high > corr[global_best_lag] * 0.85:
+            best_lag = best_high_lag
+            
+            # 針對透白 38 的防禦：
+            # 如果是透白布料，Lag 24 的能量會跟 Lag 12 一樣強，甚至更強
+            if corr[24] > max_high * 0.8:
+                best_lag = 24
+        else:
+            # 否則這就是普通密度的布料 (桃紅 28 或 灰 53)
+            best_lag = global_best_lag
 
-        # 使用修正係數 910
+        # 3. 修正計算 (常數 910)
         wpi = round(910 / best_lag)
         
         st.image(up, use_container_width=True)
