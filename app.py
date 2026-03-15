@@ -22,7 +22,7 @@ if up:
         img_bgr = cv2.imdecode(np.frombuffer(up.read(), np.uint8), 1)
         gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
         
-        # 影像優化：適中強化，確保從細紗到粗針都能捕捉
+        # 影像優化：適度強化，確保低頻粗針織與高頻細紗都能捕捉
         enhanced = cv2.createCLAHE(clipLimit=3.5, tileGridSize=(8,8)).apply(gray)
         
         h, w = enhanced.shape
@@ -33,33 +33,34 @@ if up:
         n = len(proj)
         corr = np.correlate(proj, proj, mode='full')[n-1:]
 
-        # --- 五大核心 WPI 區間能量檢測 ---
-        # 82 WPI: Lag 10-12
-        # 53 WPI: Lag 16-18
-        # 38 WPI: Lag 23-26
-        # 28 WPI: Lag 31-35
-        # 21 WPI: Lag 40-45 (米黃色區間)
+        # --- 定義五大布種的核心 Lag 座標 ---
+        # 82 WPI -> Lag 11
+        # 53 WPI -> Lag 17
+        # 38 WPI -> Lag 24
+        # 28 WPI -> Lag 32
+        # 20 WPI -> Lag 45 (米黃色)
         
         e_82 = np.max(corr[10:13])
-        e_53 = np.max(corr[16:19])
-        e_38 = np.max(corr[23:27])
-        e_28 = np.max(corr[31:36])
-        e_21 = np.max(corr[40:46]) # 新增米黃色頻段
+        e_53 = np.max(corr[16:20])
+        e_38 = np.max(corr[22:26])
+        e_28 = np.max(corr[30:35])
+        e_20 = np.max(corr[42:48]) # 擴大米黃色檢測範圍
         
-        # --- 動態決策邏輯 ---
-        # 1. 高密白布優先判斷
-        if e_82 > e_53 * 1.3 and e_82 > e_38 * 1.3:
+        # --- 競爭決策邏輯 ---
+        
+        # 1. 優先判斷米黃色：如果極低頻區有強訊號，優先歸類
+        if e_20 > e_28 * 0.95 and e_20 > e_38 * 0.95:
+            final_wpi = 20
+        # 2. 判斷高密白布
+        elif e_82 > e_53 * 1.3 and e_82 > e_38 * 1.3:
             final_wpi = 82
-        # 2. 灰色中密布
-        elif e_53 > e_82 * 0.9 and e_53 > e_38 * 1.2:
+        # 3. 判斷灰色中密布
+        elif e_53 > e_82 * 1.0 and e_53 > e_38 * 1.2:
             final_wpi = 53
-        # 3. 透白布 (具有 82 與 38 的複合能量)
+        # 4. 判斷透白布 (利用 82 與 38 的相關性)
         elif e_38 > e_82 * 0.7 and e_38 > e_28 * 1.1:
             final_wpi = 38
-        # 4. 米黃色 (極低頻區，能量通常分布在較寬的 Lag)
-        elif e_21 > e_28 * 1.05: # 如果 21 WPI 能量超越 28 WPI，則判定為米黃
-            final_wpi = 21
-        # 5. 桃紅色 (剩下的低頻主力)
+        # 5. 桃紅色
         else:
             final_wpi = 28
 
