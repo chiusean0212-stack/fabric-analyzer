@@ -20,9 +20,10 @@ up = st.file_uploader(t[2], type=['jpg', 'jpeg', 'png'])
 if up:
     try:
         img_bgr = cv2.imdecode(np.frombuffer(up.read(), np.uint8), 1)
-        gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
+        img_hsv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
         
-        # 影像優化：適度強化，確保低頻粗針織與高頻細紗都能捕捉
+        # 影像優化
+        gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
         enhanced = cv2.createCLAHE(clipLimit=3.5, tileGridSize=(8,8)).apply(gray)
         
         h, w = enhanced.shape
@@ -33,34 +34,47 @@ if up:
         n = len(proj)
         corr = np.correlate(proj, proj, mode='full')[n-1:]
 
-        # --- 定義五大布種的核心 Lag 座標 ---
-        # 82 WPI -> Lag 11
-        # 53 WPI -> Lag 17
-        # 38 WPI -> Lag 24
-        # 28 WPI -> Lag 32
-        # 20 WPI -> Lag 45 (米黃色)
+        # --- 核心數據鎖定：六大布種座標 ---
+        e_82 = np.max(corr[10:13]) # 白
+        e_53 = np.max(corr[16:20]) # 灰
+        e_38 = np.max(corr[23:26]) # 透白 / 綠 (偏誤區)
+        e_35 = np.max(corr[26:29]) # 綠色 35 (新增)
+        e_28 = np.max(corr[31:35]) # 桃紅
+        e_24 = np.max(corr[37:41]) # 米白 24 (新增)
+        e_20 = np.max(corr[43:48]) # 米黃 20
+
+        # --- 色彩輔助判斷 ---
+        avg_s = np.mean(img_hsv[:,:,1]) # 飽和度
+        avg_v = np.mean(img_hsv[:,:,2]) # 亮度
         
-        e_82 = np.max(corr[10:13])
-        e_53 = np.max(corr[16:20])
-        e_38 = np.max(corr[22:26])
-        e_28 = np.max(corr[30:35])
-        e_20 = np.max(corr[42:48]) # 擴大米黃色檢測範圍
+        # --- 決策邏輯：排除法與競爭法 ---
         
-        # --- 競爭決策邏輯 ---
+        # 1. 米白 24 專屬保護 (防止跳 82)
+        # 如果亮度高但飽和度有一點點(米白)，且低頻能量大於高頻一半，鎖定低頻
+        if 20 < avg_s < 60 and e_24 > e_82 * 0.5:
+            final_wpi = 24
         
-        # 1. 優先判斷米黃色：如果極低頻區有強訊號，優先歸類
-        if e_20 > e_28 * 0.95 and e_20 > e_38 * 0.95:
+        # 2. 米黃 20 優先 (最粗針織)
+        elif e_20 > e_28 * 0.9 and e_20 > e_35 * 0.9:
             final_wpi = 20
-        # 2. 判斷高密白布
-        elif e_82 > e_53 * 1.3 and e_82 > e_38 * 1.3:
+            
+        # 3. 白色 82 (必須是極低飽和度且高頻具備壓倒性)
+        elif avg_s < 30 and e_82 > e_53 * 1.3 and e_82 > e_24 * 1.5:
             final_wpi = 82
-        # 3. 判斷灰色中密布
-        elif e_53 > e_82 * 1.0 and e_53 > e_38 * 1.2:
+            
+        # 4. 灰色 53
+        elif e_53 > e_82 * 1.0 and e_53 > e_38 * 1.1:
             final_wpi = 53
-        # 4. 判斷透白布 (利用 82 與 38 的相關性)
+            
+        # 5. 綠色 35 與 透白 38 的微細競爭
+        elif e_35 > e_38 * 0.95 and e_35 > e_28 * 1.1:
+            final_wpi = 35
+            
+        # 6. 透白 38
         elif e_38 > e_82 * 0.7 and e_38 > e_28 * 1.1:
             final_wpi = 38
-        # 5. 桃紅色
+            
+        # 7. 桃紅 28
         else:
             final_wpi = 28
 
