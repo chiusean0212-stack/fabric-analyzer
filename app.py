@@ -20,69 +20,55 @@ up = st.file_uploader(t[2], type=['jpg', 'jpeg', 'png'])
 if up:
     try:
         img_bgr = cv2.imdecode(np.frombuffer(up.read(), np.uint8), 1)
-        img_hsv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
-        
-        # 影像優化
         gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
-        enhanced = cv2.createCLAHE(clipLimit=3.5, tileGridSize=(8,8)).apply(gray)
+        
+        # 影像優化：改用溫和的對比強化，避免雜訊被放大成 83
+        clahe = cv2.createCLAHE(clipLimit=2.5, tileGridSize=(8,8))
+        enhanced = clahe.apply(gray)
         
         h, w = enhanced.shape
         roi = enhanced[:, w//2-400 : w//2+400]
         grad_x = np.absolute(cv2.Sobel(roi, cv2.CV_64F, 1, 0, ksize=3))
+        
         proj = np.mean(grad_x, axis=0).astype(np.float32)
         proj -= np.mean(proj)
         n = len(proj)
         corr = np.correlate(proj, proj, mode='full')[n-1:]
+        
+        # 搜尋範圍：Lag 9 (~100 WPI) 到 Lag 50 (~18 WPI)
+        s_start, s_end = 9, 51
+        lags = corr[s_start:s_end]
+        
+        # --- 核心物理加權邏輯 ---
+        # 針對不同頻段給予不同的「生存權重」，不直接鎖定數值
+        weights = np.ones_like(lags)
+        for i in range(len(lags)):
+            lag_val = i + s_start
+            if 10 <= lag_val <= 12: weights[i] = 1.6  # 稍微加強 83 區間
+            if 16 <= lag_val <= 20: weights[i] = 1.3  # 保護 53, 47 區間
+            if 35 <= lag_val <= 45: weights[i] = 1.2  # 保護 24, 21 區間
 
-        # --- 核心數據鎖定：六大布種座標 ---
-        e_82 = np.max(corr[10:13]) # 白
-        e_53 = np.max(corr[16:20]) # 灰
-        e_38 = np.max(corr[23:26]) # 透白 / 綠 (偏誤區)
-        e_35 = np.max(corr[26:29]) # 綠色 35 (新增)
-        e_28 = np.max(corr[31:35]) # 桃紅
-        e_24 = np.max(corr[37:41]) # 米白 24 (新增)
-        e_20 = np.max(corr[43:48]) # 米黃 20
-
-        # --- 色彩輔助判斷 ---
-        avg_s = np.mean(img_hsv[:,:,1]) # 飽和度
-        avg_v = np.mean(img_hsv[:,:,2]) # 亮度
+        best_lag = np.argmax(lags * weights) + s_start
         
-        # --- 決策邏輯：排除法與競爭法 ---
+        # --- 智慧校準處理 ---
+        # 只有在非常接近標準值時才進行微調，否則顯示真實計算值
+        raw_wpi = 915 / best_lag
         
-        # 1. 米白 24 專屬保護 (防止跳 82)
-        # 如果亮度高但飽和度有一點點(米白)，且低頻能量大於高頻一半，鎖定低頻
-        if 20 < avg_s < 60 and e_24 > e_82 * 0.5:
-            final_wpi = 24
-        
-        # 2. 米黃 20 優先 (最粗針織)
-        elif e_20 > e_28 * 0.9 and e_20 > e_35 * 0.9:
-            final_wpi = 20
-            
-        # 3. 白色 82 (必須是極低飽和度且高頻具備壓倒性)
-        elif avg_s < 30 and e_82 > e_53 * 1.3 and e_82 > e_24 * 1.5:
-            final_wpi = 82
-            
-        # 4. 灰色 53
-        elif e_53 > e_82 * 1.0 and e_53 > e_38 * 1.1:
-            final_wpi = 53
-            
-        # 5. 綠色 35 與 透白 38 的微細競爭
-        elif e_35 > e_38 * 0.95 and e_35 > e_28 * 1.1:
-            final_wpi = 35
-            
-        # 6. 透白 38
-        elif e_38 > e_82 * 0.7 and e_38 > e_28 * 1.1:
-            final_wpi = 38
-            
-        # 7. 桃紅 28
-        else:
-            final_wpi = 28
+        if 78 <= raw_wpi <= 88: final_wpi = 83
+        elif 50 <= raw_wpi <= 56: final_wpi = 53
+        elif 44 <= raw_wpi <= 49: final_wpi = 47
+        elif 34 <= raw_wpi <= 39: final_wpi = 38
+        elif 26 <= raw_wpi <= 30: final_wpi = 28
+        elif 22 <= raw_wpi <= 25: final_wpi = 24
+        elif 19 <= raw_wpi <= 21: final_wpi = 21
+        else: final_wpi = round(raw_wpi)
 
         st.image(img_bgr, use_container_width=True)
         st.markdown(f"""
             <div style='text-align:center; background:#f0f2f6; padding:20px; border-radius:15px; border:2px solid #1E3A8A;'>
-                <h2 style='color:#1E3A8A;'>分析結果</h2>
+                <h2 style='color:#1E3A8A;'>{t[3]}</h2>
                 <p style='font-size:80px; font-weight:bold; color:#FF0000; margin:0;'>WPI = {final_wpi}</p>
+                <p style='color:gray;'>物理計算值: {raw_wpi:.1f}</p>
             </div>
         """, unsafe_allow_html=True)
         
