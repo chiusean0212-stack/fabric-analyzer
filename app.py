@@ -11,7 +11,6 @@ languages = {
     "繁體中文": {
         "company": "廣笠機械",
         "system": "數位布鏡 - 自動 WPI 分析系統",
-        "slogan": "專業 · 精準 · 智能",
         "login_title": "系統授權登入",
         "password": "授權密碼 (Password)",
         "login_btn": "系統登入",
@@ -25,7 +24,6 @@ languages = {
     "English": {
         "company": "Goang Lih",
         "system": "Digital Fabric Scope - Auto WPI System",
-        "slogan": "Professional · Precise · Smart",
         "login_title": "System Authorization",
         "password": "Password",
         "login_btn": "Login",
@@ -38,8 +36,9 @@ languages = {
     }
 }
 
-# 側邊欄語言切換
-lang_choice = st.sidebar.selectbox("Language / 語言", ["繁體中文", "English"])
+# --- 頁面頂部：中英文切換按鈕 ---
+# 使用 st.radio 並橫向排列，放在最上方
+lang_choice = st.radio("Language / 語言選擇", ["繁體中文", "English"], horizontal=True, label_visibility="visible")
 txt = languages[lang_choice]
 
 # 自定義 CSS
@@ -71,7 +70,7 @@ if "auth" not in st.session_state:
     st.session_state["auth"] = False
 
 if not st.session_state["auth"]:
-    # 登入介面排版
+    # 標題排版 (仿照片)
     col1, col2 = st.columns([1, 3])
     with col1:
         if os.path.exists("LOGO.png"):
@@ -84,6 +83,7 @@ if not st.session_state["auth"]:
 
     st.write("---")
     
+    # 登入框
     left, mid, right = st.columns([1, 2, 1])
     with mid:
         st.markdown(f"<div class='login-box'><h3>{txt['login_title']}</h3>", unsafe_allow_html=True)
@@ -97,7 +97,7 @@ if not st.session_state["auth"]:
         st.markdown("</div>", unsafe_allow_html=True)
     st.stop()
 
-# --- 分析主程式 ---
+# --- 登入後的介面 ---
 col1, col2 = st.columns([1, 4])
 with col1:
     if os.path.exists("LOGO.png"):
@@ -115,10 +115,9 @@ up = st.file_uploader("", type=['jpg', 'jpeg', 'png'], label_visibility="collaps
 
 if up:
     try:
+        # 分析核心邏輯 (延續穩定版)
         img_bgr = cv2.imdecode(np.frombuffer(up.read(), np.uint8), 1)
         gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
-        
-        # 影像優化
         denoised = cv2.bilateralFilter(gray, 9, 75, 75)
         clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8,8))
         enhanced = clahe.apply(denoised)
@@ -131,12 +130,10 @@ if up:
         n = len(proj)
         corr = np.correlate(proj, proj, mode='full')[n-1:]
         
-        # 核心判定 (高低頻分流)
-        high_zone = corr[10:15]
-        low_zone = corr[15:51]
+        # 判定
+        high_zone, low_zone = corr[10:15], corr[15:51]
         max_high, max_low = np.max(high_zone), np.max(low_zone)
-        high_avg = np.mean(high_zone)
-        is_high_pure = (max_high > high_avg * 1.5)
+        is_high_pure = (max_high > np.mean(high_zone) * 1.5)
         
         if max_high > max_low * 0.75 and is_high_pure:
             best_lag = np.argmax(high_zone) + 10
@@ -154,27 +151,4 @@ if up:
         
         # 歸位矩陣
         if 78 <= raw_wpi <= 95: final_wpi = 83
-        elif 50 <= raw_wpi <= 58: final_wpi = 53
-        elif 44 <= raw_wpi <= 49: final_wpi = 47
-        elif 37 <= raw_wpi <= 41: final_wpi = 38
-        elif 34 <= raw_wpi <= 36.9: final_wpi = 36
-        elif 27 <= raw_wpi <= 31: final_wpi = 28
-        elif 23 <= raw_wpi <= 26.9: final_wpi = 24
-        elif 19 <= raw_wpi <= 22: final_wpi = 21
-        else: final_wpi = round(raw_wpi)
-
-        # 顯示結果
-        st.image(img_bgr, use_container_width=True)
-        st.markdown(f"""
-            <div style='text-align:center; background:#ffffff; padding:20px; border:2px solid #1e3a8a; border-radius:15px; margin-top:10px;'>
-                <h3 style='margin:0; color:#1e3a8a;'>{txt['result_title']}</h3>
-                <p style='font-size:85px; font-weight:bold; color:#ef4444; margin:0;'>{final_wpi}</p>
-                <p style='color:gray;'>WPI ({txt['calc_ref']}: {raw_wpi:.1f})</p>
-            </div>
-        """, unsafe_allow_html=True)
-        
-    except Exception as e:
-        st.error(f"Error: {e}")
-
-st.write("---")
-st.markdown(f"<p style='text-align:center; color:silver; font-size:0.7em;'>{txt['footer']}</p>", unsafe_allow_html=True)
+        elif 50 <= raw_wpi <= 58:
