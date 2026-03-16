@@ -2,28 +2,90 @@ import streamlit as st
 import cv2
 import numpy as np
 
-st.set_page_config(page_title="Goang Lih AI", layout="centered")
+# 頁面配置
+st.set_page_config(page_title="Goang Lih AI Analysis", layout="centered", page_icon="⚙️")
 
-t = {"繁體中文": ["廣笠機械", "AI 分析系統", "📸 上傳照片", "結果", "授權登入"],
-     "English": ["Goang Lih", "AI Analysis", "📸 Upload", "Result", "Login"]}[st.sidebar.selectbox("Lang", ["繁體中文", "English"])]
+# 自定義 CSS 提升介面質感
+st.markdown("""
+    <style>
+    .login-container {
+        background: linear-gradient(135deg, #1e3a8a 0%, #0f172a 100%);
+        padding: 50px;
+        border-radius: 20px;
+        box-shadow: 0 10px 25px rgba(0,0,0,0.3);
+        color: white;
+        text-align: center;
+    }
+    .stButton>button {
+        width: 100%;
+        background-color: #3b82f6;
+        color: white;
+        border-radius: 10px;
+        height: 3em;
+        font-weight: bold;
+        border: none;
+        transition: 0.3s;
+    }
+    .stButton>button:hover {
+        background-color: #2563eb;
+        box-shadow: 0 5px 15px rgba(59, 130, 246, 0.4);
+    }
+    .stTextInput>div>div>input {
+        border-radius: 10px;
+        text-align: center;
+    }
+    </style>
+""", unsafe_allow_html=True)
 
-if "auth" not in st.session_state: st.session_state["auth"] = False
+# 語言包
+t = {
+    "繁體中文": ["廣笠機械", "AI 智能織物分析系統", "📸 上傳布料照片", "分析結果", "授權登入", "請輸入系統授權密碼", "密碼錯誤", "專業 · 精準 · 智能"],
+    "English": ["Goang Lih", "AI Fabric Analysis System", "📸 Upload Photo", "Result", "Login", "Enter System Password", "Wrong Password", "Professional · Precise · Smart"]
+}
+
+# 側邊欄語言切換
+lang = st.sidebar.selectbox("Language / 語言", ["繁體中文", "English"])
+txt = t[lang]
+
+# 登入邏輯
+if "auth" not in st.session_state:
+    st.session_state["auth"] = False
+
 if not st.session_state["auth"]:
-    pwd = st.text_input(t[4], type="password")
-    if st.button(t[4]):
-        if pwd == "777": st.session_state["auth"] = True; st.rerun()
+    # 登入視覺容器
+    st.markdown(f"""
+        <div class="login-container">
+            <h1 style='margin-bottom:0;'>{txt[0]}</h1>
+            <p style='font-size:1.2em; opacity:0.8;'>{txt[1]}</p>
+            <hr style='border-color: rgba(255,255,255,0.2);'>
+            <p style='font-size:0.9em; margin-bottom:20px;'>{txt[7]}</p>
+        </div>
+    """, unsafe_allow_html=True)
+    
+    # 密碼輸入
+    with st.container():
+        st.write(" ")
+        pwd = st.text_input(txt[5], type="password", help="請輸入 3 位數授權碼")
+        if st.button(txt[4]):
+            if pwd == "777":
+                st.session_state["auth"] = True
+                st.success("驗證成功！正在啟動系統...")
+                st.rerun()
+            else:
+                st.error(txt[6])
     st.stop()
 
-st.title(f"{t[0]} Goang Lih")
+# --- 進入分析主程式 ---
+st.title(f"⚙️ {txt[0]} {txt[1]}")
 
-up = st.file_uploader(t[2], type=['jpg', 'jpeg', 'png'])
+up = st.file_uploader(txt[2], type=['jpg', 'jpeg', 'png'])
+
 if up:
     try:
         img_bgr = cv2.imdecode(np.frombuffer(up.read(), np.uint8), 1)
         gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
         
-        # 影像優化：使用雙邊濾波 (Bilateral Filter)
-        # 這種濾波器能在保持邊緣（紗線）的同時，抹平表面的毛羽雜訊
+        # 影像優化：雙邊濾波 + CLAHE
         denoised = cv2.bilateralFilter(gray, 9, 75, 75)
         clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8,8))
         enhanced = clahe.apply(denoised)
@@ -37,40 +99,29 @@ if up:
         n = len(proj)
         corr = np.correlate(proj, proj, mode='full')[n-1:]
         
-        # --- 核心邏輯：動態頻段准入 ---
-        # 搜尋範圍從 Lag 10 到 Lag 50
-        # 定義高頻 (Lag 10-14) 與 中低頻 (Lag 15-50)
+        # 核心判定邏輯 (延續之前的穩定版)
         high_zone = corr[10:15]
         low_zone = corr[15:51]
-        
         max_high = np.max(high_zone)
         max_low = np.max(low_zone)
-        
-        # 計算訊號比 (SNR)
-        # 如果高頻最強點比周圍平均能量高出很多，才認定是真實的 83 WPI
         high_avg = np.mean(high_zone)
-        is_high_pure = (max_high > high_avg * 1.5) # 純度檢查
+        is_high_pure = (max_high > high_avg * 1.5)
         
-        # 判定規則：
-        # 只有當高頻能量夠強，且具備足夠純度時，才判定為高頻 (白布 83)
         if max_high > max_low * 0.75 and is_high_pure:
             best_lag = np.argmax(high_zone) + 10
         else:
-            # 否則一律在低頻區競爭 (保護 53, 36, 28, 24, 21)
             s_start = 15
             lags = corr[s_start:51]
-            # 給予特定布種座標一點點引力
             weights = np.ones_like(lags)
             for i in range(len(lags)):
                 l_val = i + s_start
-                if 16 <= l_val <= 19: weights[i] = 1.3 # 53
-                if 31 <= l_val <= 45: weights[i] = 1.2 # 28, 24, 21
+                if 16 <= l_val <= 19: weights[i] = 1.3
+                if 31 <= l_val <= 45: weights[i] = 1.2
             best_lag = np.argmax(lags * weights) + s_start
         
-        # 物理計算 (採用 925 常數)
         raw_wpi = 925 / best_lag
         
-        # 硬性歸位矩陣
+        # 歸位矩陣
         if 78 <= raw_wpi <= 95: final_wpi = 83
         elif 50 <= raw_wpi <= 58: final_wpi = 53
         elif 44 <= raw_wpi <= 49: final_wpi = 47
@@ -81,16 +132,22 @@ if up:
         elif 19 <= raw_wpi <= 22: final_wpi = 21
         else: final_wpi = round(raw_wpi)
 
+        # 結果呈現
         st.image(img_bgr, use_container_width=True)
         st.markdown(f"""
-            <div style='text-align:center; background:#f0f2f6; padding:20px; border-radius:15px; border:2px solid #1E3A8A;'>
-                <h2 style='color:#1E3A8A;'>分析結果</h2>
-                <p style='font-size:80px; font-weight:bold; color:#FF0000; margin:0;'>WPI = {final_wpi}</p>
-                <p style='color:gray;'>物理計算值: {raw_wpi:.1f} | 模式: {"高頻(白布)" if max_high > max_low * 0.75 and is_high_pure else "中低頻(彩色/粗針)"}</p>
+            <div style='text-align:center; background:#f8fafc; padding:30px; border-radius:20px; border:3px solid #1e3a8a; margin-top:20px;'>
+                <h2 style='color:#1e3a8a; margin-bottom:10px;'>{txt[3]}</h2>
+                <div style='background:#1e3a8a; color:white; display:inline-block; padding:10px 40px; border-radius:50px; margin-bottom:15px;'>
+                    <span style='font-size:1.2em; letter-spacing:2px;'>WPI</span>
+                </div>
+                <p style='font-size:100px; font-weight:bold; color:#ef4444; margin:0; line-height:1;'>{final_wpi}</p>
+                <p style='color:gray; margin-top:10px;'>精確計算參考: {raw_wpi:.1f}</p>
             </div>
         """, unsafe_allow_html=True)
         
     except Exception as e:
-        st.error(f"Error: {e}")
+        st.error(f"系統分析錯誤: {e}")
 
-st.caption("© 2026 Goang Lih Machinery Co., Ltd.")
+# 頁尾
+st.markdown("---")
+st.caption(f"© 2026 Goang Lih Machinery Co., Ltd. All Rights Reserved. | 廣笠機械工業 版權所有")
