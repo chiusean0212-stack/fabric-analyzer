@@ -36,32 +36,16 @@ languages = {
     }
 }
 
-# --- 頁面頂部：中英文切換按鈕 ---
-# 使用 st.radio 並橫向排列，放在最上方
-lang_choice = st.radio("Language / 語言選擇", ["繁體中文", "English"], horizontal=True, label_visibility="visible")
+# --- 頁面頂部：語言選擇 ---
+lang_choice = st.radio("Language / 語言選擇", ["繁體中文", "English"], horizontal=True)
 txt = languages[lang_choice]
 
 # 自定義 CSS
 st.markdown(f"""
     <style>
-    .title-text {{
-        color: #1e3a8a;
-        font-family: "Microsoft JhengHei", sans-serif;
-        font-weight: bold;
-        margin-bottom: 0px;
-    }}
-    .subtitle-text {{
-        color: #64748b;
-        font-size: 1.1em;
-        margin-top: 0px;
-    }}
-    .login-box {{
-        padding: 30px;
-        border: 1px solid #e2e8f0;
-        border-radius: 10px;
-        background-color: #f8fafc;
-        text-align: center;
-    }}
+    .title-text {{ color: #1e3a8a; font-family: "Microsoft JhengHei", sans-serif; font-weight: bold; margin-bottom: 0px; }}
+    .subtitle-text {{ color: #64748b; font-size: 1.1em; margin-top: 0px; }}
+    .login-box {{ padding: 30px; border: 1px solid #e2e8f0; border-radius: 10px; background-color: #f8fafc; text-align: center; }}
     </style>
 """, unsafe_allow_html=True)
 
@@ -70,7 +54,6 @@ if "auth" not in st.session_state:
     st.session_state["auth"] = False
 
 if not st.session_state["auth"]:
-    # 標題排版 (仿照片)
     col1, col2 = st.columns([1, 3])
     with col1:
         if os.path.exists("LOGO.png"):
@@ -80,10 +63,7 @@ if not st.session_state["auth"]:
     with col2:
         st.markdown(f"<h1 class='title-text'>{txt['company']} <span style='color:#dc2626;'>Goang Lih</span></h1>", unsafe_allow_html=True)
         st.markdown(f"<p class='subtitle-text'>{txt['system']}</p>", unsafe_allow_html=True)
-
     st.write("---")
-    
-    # 登入框
     left, mid, right = st.columns([1, 2, 1])
     with mid:
         st.markdown(f"<div class='login-box'><h3>{txt['login_title']}</h3>", unsafe_allow_html=True)
@@ -97,7 +77,7 @@ if not st.session_state["auth"]:
         st.markdown("</div>", unsafe_allow_html=True)
     st.stop()
 
-# --- 登入後的介面 ---
+# --- 登入後的分析介面 ---
 col1, col2 = st.columns([1, 4])
 with col1:
     if os.path.exists("LOGO.png"):
@@ -107,7 +87,6 @@ with col2:
     st.markdown(f"<p style='color:gray;'>{txt['system']}</p>", unsafe_allow_html=True)
 
 st.write("---")
-
 st.markdown(f"### {txt['upload_title']}")
 st.markdown(f"<p style='font-size:0.8em; color:gray;'>{txt['upload_hint']}</p>", unsafe_allow_html=True)
 
@@ -115,7 +94,6 @@ up = st.file_uploader("", type=['jpg', 'jpeg', 'png'], label_visibility="collaps
 
 if up:
     try:
-        # 分析核心邏輯 (延續穩定版)
         img_bgr = cv2.imdecode(np.frombuffer(up.read(), np.uint8), 1)
         gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
         denoised = cv2.bilateralFilter(gray, 9, 75, 75)
@@ -130,7 +108,6 @@ if up:
         n = len(proj)
         corr = np.correlate(proj, proj, mode='full')[n-1:]
         
-        # 判定
         high_zone, low_zone = corr[10:15], corr[15:51]
         max_high, max_low = np.max(high_zone), np.max(low_zone)
         is_high_pure = (max_high > np.mean(high_zone) * 1.5)
@@ -149,6 +126,37 @@ if up:
         
         raw_wpi = 925 / best_lag
         
-        # 歸位矩陣
-        if 78 <= raw_wpi <= 95: final_wpi = 83
+        # --- 修正後的歸位矩陣 (確保縮進正確) ---
+        if 78 <= raw_wpi <= 95:
+            final_wpi = 83
         elif 50 <= raw_wpi <= 58:
+            final_wpi = 53
+        elif 44 <= raw_wpi <= 49:
+            final_wpi = 47
+        elif 37 <= raw_wpi <= 41:
+            final_wpi = 38
+        elif 34 <= raw_wpi <= 36.9:
+            final_wpi = 36
+        elif 27 <= raw_wpi <= 31:
+            final_wpi = 28
+        elif 23 <= raw_wpi <= 26.9:
+            final_wpi = 24
+        elif 19 <= raw_wpi <= 22:
+            final_wpi = 21
+        else:
+            final_wpi = round(raw_wpi)
+
+        st.image(img_bgr, use_container_width=True)
+        st.markdown(f"""
+            <div style='text-align:center; background:#ffffff; padding:20px; border:2px solid #1e3a8a; border-radius:15px; margin-top:10px;'>
+                <h3 style='margin:0; color:#1e3a8a;'>{txt['result_title']}</h3>
+                <p style='font-size:85px; font-weight:bold; color:#ef4444; margin:0;'>{final_wpi}</p>
+                <p style='color:gray;'>WPI ({txt['calc_ref']}: {raw_wpi:.1f})</p>
+            </div>
+        """, unsafe_allow_html=True)
+        
+    except Exception as e:
+        st.error(f"Error: {e}")
+
+st.write("---")
+st.markdown(f"<p style='text-align:center; color:silver; font-size:0.7em;'>{txt['footer']}</p>", unsafe_allow_html=True)
