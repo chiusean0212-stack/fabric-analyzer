@@ -1,91 +1,107 @@
 import streamlit as st
 import cv2
 import numpy as np
+import os
 
 # 頁面配置
-st.set_page_config(page_title="Goang Lih AI Analysis", layout="centered", page_icon="⚙️")
+st.set_page_config(page_title="廣笠機械 Goang Lih", layout="centered", page_icon="⚙️")
 
-# 自定義 CSS 提升介面質感
+# 自定義 CSS：仿照照片中的簡潔白底風格
 st.markdown("""
     <style>
-    .login-container {
-        background: linear-gradient(135deg, #1e3a8a 0%, #0f172a 100%);
-        padding: 50px;
-        border-radius: 20px;
-        box-shadow: 0 10px 25px rgba(0,0,0,0.3);
-        color: white;
-        text-align: center;
+    .main {
+        background-color: #ffffff;
     }
     .stButton>button {
         width: 100%;
-        background-color: #3b82f6;
+        background-color: #1e3a8a;
         color: white;
-        border-radius: 10px;
-        height: 3em;
-        font-weight: bold;
-        border: none;
+        border-radius: 5px;
         transition: 0.3s;
     }
-    .stButton>button:hover {
-        background-color: #2563eb;
-        box-shadow: 0 5px 15px rgba(59, 130, 246, 0.4);
-    }
-    .stTextInput>div>div>input {
+    .login-box {
+        padding: 30px;
+        border: 1px solid #e2e8f0;
         border-radius: 10px;
-        text-align: center;
+        background-color: #f8fafc;
+    }
+    .title-text {
+        color: #1e3a8a;
+        font-family: "Microsoft JhengHei", sans-serif;
+        font-weight: bold;
+        margin-bottom: 0px;
+    }
+    .subtitle-text {
+        color: #64748b;
+        font-size: 1.1em;
+        margin-top: 0px;
     }
     </style>
 """, unsafe_allow_html=True)
-
-# 語言包
-t = {
-    "繁體中文": ["廣笠機械", "AI 智能織物分析系統", "📸 上傳布料照片", "分析結果", "授權登入", "請輸入系統授權密碼", "密碼錯誤", "專業 · 精準 · 智能"],
-    "English": ["Goang Lih", "AI Fabric Analysis System", "📸 Upload Photo", "Result", "Login", "Enter System Password", "Wrong Password", "Professional · Precise · Smart"]
-}
-
-# 側邊欄語言切換
-lang = st.sidebar.selectbox("Language / 語言", ["繁體中文", "English"])
-txt = t[lang]
 
 # 登入邏輯
 if "auth" not in st.session_state:
     st.session_state["auth"] = False
 
 if not st.session_state["auth"]:
-    # 登入視覺容器
-    st.markdown(f"""
-        <div class="login-container">
-            <h1 style='margin-bottom:0;'>{txt[0]}</h1>
-            <p style='font-size:1.2em; opacity:0.8;'>{txt[1]}</p>
-            <hr style='border-color: rgba(255,255,255,0.2);'>
-            <p style='font-size:0.9em; margin-bottom:20px;'>{txt[7]}</p>
-        </div>
-    """, unsafe_allow_html=True)
+    # 登入介面排版
+    col1, col2 = st.columns([1, 3])
     
-    # 密碼輸入
+    with col1:
+        # 嘗試讀取資料夾內的 LOGO.png
+        if os.path.exists("LOGO.png"):
+            st.image("LOGO.png", width=120)
+        else:
+            # 如果找不到檔案，顯示一個佔位圖示
+            st.write("⚙️ LOGO")
+            
+    with col2:
+        st.markdown("<h1 class='title-text'>廣笠機械 <span style='color:#dc2626;'>Goang Lih</span></h1>", unsafe_allow_html=True)
+        st.markdown("<p class='subtitle-text'>數位布鏡 - 自動 WPI 分析系統</p>", unsafe_allow_html=True)
+
+    st.write("---")
+    
+    # 登入框
     with st.container():
-        st.write(" ")
-        pwd = st.text_input(txt[5], type="password", help="請輸入 3 位數授權碼")
-        if st.button(txt[4]):
-            if pwd == "777":
-                st.session_state["auth"] = True
-                st.success("驗證成功！正在啟動系統...")
-                st.rerun()
-            else:
-                st.error(txt[6])
+        left, mid, right = st.columns([1, 2, 1])
+        with mid:
+            st.markdown("<div class='login-box'>", unsafe_allow_html=True)
+            pwd = st.text_input("授權密碼 (Password)", type="password")
+            if st.button("系統登入"):
+                if pwd == "777":
+                    st.session_state["auth"] = True
+                    st.rerun()
+                else:
+                    st.error("密碼錯誤，請重新輸入")
+            st.markdown("</div>", unsafe_allow_html=True)
     st.stop()
 
-# --- 進入分析主程式 ---
-st.title(f"⚙️ {txt[0]} {txt[1]}")
+# --- 登入後的分析介面 (仿照照片排版) ---
 
-up = st.file_uploader(txt[2], type=['jpg', 'jpeg', 'png'])
+# 標頭區
+col1, col2 = st.columns([1, 4])
+with col1:
+    if os.path.exists("LOGO.png"):
+        st.image("LOGO.png", width=100)
+with col2:
+    st.markdown("<h2 style='margin-bottom:0;'>廣笠機械 <span style='color:#dc2626;'>Goang Lih</span></h2>", unsafe_allow_html=True)
+    st.markdown("<p style='color:gray;'>數位布鏡 - 自動 WPI 分析系統</p>", unsafe_allow_html=True)
+
+st.write("---")
+
+# 上傳區
+st.markdown("### 📥 上傳布樣")
+st.markdown("<p style='font-size:0.8em; color:gray;'>選擇照片 (建議解析度：1英吋 = 900像素)</p>", unsafe_allow_html=True)
+
+up = st.file_uploader("", type=['jpg', 'jpeg', 'png'])
 
 if up:
     try:
+        # 影像讀取與處理 (沿用最穩定的分析邏輯)
         img_bgr = cv2.imdecode(np.frombuffer(up.read(), np.uint8), 1)
         gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
         
-        # 影像優化：雙邊濾波 + CLAHE
+        # 雙邊濾波防雜訊
         denoised = cv2.bilateralFilter(gray, 9, 75, 75)
         clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8,8))
         enhanced = clahe.apply(denoised)
@@ -93,17 +109,15 @@ if up:
         h, w = enhanced.shape
         roi = enhanced[:, w//2-400 : w//2+400]
         grad_x = np.absolute(cv2.Sobel(roi, cv2.CV_64F, 1, 0, ksize=3))
-        
         proj = np.mean(grad_x, axis=0).astype(np.float32)
         proj -= np.mean(proj)
         n = len(proj)
         corr = np.correlate(proj, proj, mode='full')[n-1:]
         
-        # 核心判定邏輯 (延續之前的穩定版)
+        # 判定邏輯
         high_zone = corr[10:15]
         low_zone = corr[15:51]
-        max_high = np.max(high_zone)
-        max_low = np.max(low_zone)
+        max_high, max_low = np.max(high_zone), np.max(low_zone)
         high_avg = np.mean(high_zone)
         is_high_pure = (max_high > high_avg * 1.5)
         
@@ -132,22 +146,19 @@ if up:
         elif 19 <= raw_wpi <= 22: final_wpi = 21
         else: final_wpi = round(raw_wpi)
 
-        # 結果呈現
+        # 顯示結果
         st.image(img_bgr, use_container_width=True)
         st.markdown(f"""
-            <div style='text-align:center; background:#f8fafc; padding:30px; border-radius:20px; border:3px solid #1e3a8a; margin-top:20px;'>
-                <h2 style='color:#1e3a8a; margin-bottom:10px;'>{txt[3]}</h2>
-                <div style='background:#1e3a8a; color:white; display:inline-block; padding:10px 40px; border-radius:50px; margin-bottom:15px;'>
-                    <span style='font-size:1.2em; letter-spacing:2px;'>WPI</span>
-                </div>
-                <p style='font-size:100px; font-weight:bold; color:#ef4444; margin:0; line-height:1;'>{final_wpi}</p>
-                <p style='color:gray; margin-top:10px;'>精確計算參考: {raw_wpi:.1f}</p>
+            <div style='text-align:center; background:#ffffff; padding:20px; border:2px solid #1e3a8a; border-radius:15px;'>
+                <h3 style='margin:0; color:#1e3a8a;'>分析結果</h3>
+                <p style='font-size:80px; font-weight:bold; color:#ef4444; margin:0;'>{final_wpi}</p>
+                <p style='color:gray;'>WPI (計算值: {raw_wpi:.1f})</p>
             </div>
         """, unsafe_allow_html=True)
         
     except Exception as e:
-        st.error(f"系統分析錯誤: {e}")
+        st.error(f"分析失敗: {e}")
 
-# 頁尾
-st.markdown("---")
-st.caption(f"© 2026 Goang Lih Machinery Co., Ltd. All Rights Reserved. | 廣笠機械工業 版權所有")
+# 頁尾 (參照照片底部的文字)
+st.write("---")
+st.markdown("<p style='text-align:center; color:silver; font-size:0.7em;'>© 2026 廣笠機械 Goang Lih | 專業針織機械製造 | AI 數位轉型專案</p>", unsafe_allow_html=True)
